@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.3.8</title>
+    <title>时间炼金术 v1.3.9</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -74,11 +74,18 @@
                 localStorage.setItem('syncConfig', JSON.stringify(config));
             }, [logs, activeTask, config]);
 
+            // 核心时区转换函数：ISO(UTC) -> 本地时间字符串 (YYYY-MM-DDTHH:mm)
+            const toLocalISO = (isoString) => {
+                if (!isoString) return "";
+                const date = new Date(isoString);
+                const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+                return localDate.toISOString().slice(0, 16);
+            };
+
             const initBackfillTime = () => {
                 const now = new Date();
                 const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-                const format = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-                setBackfillData({ start: format(oneHourAgo), end: format(now) });
+                setBackfillData({ start: toLocalISO(oneHourAgo.toISOString()), end: toLocalISO(now.toISOString()) });
             };
 
             const syncData = async (mode = 'sync', silent = false) => {
@@ -229,7 +236,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.3.8</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.3.9</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -314,7 +321,7 @@
                                                 <span className="text-[9px] text-gray-500 w-8">开始</span>
                                                 <input 
                                                     type="datetime-local" 
-                                                    value={editDraft.startTime.slice(0,16)} 
+                                                    value={toLocalISO(editDraft.startTime)} 
                                                     onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} 
                                                     className="flex-1 text-[10px] py-1 bg-transparent"
                                                 />
@@ -323,7 +330,7 @@
                                                 <span className="text-[9px] text-gray-500 w-8">结束</span>
                                                 <input 
                                                     type="datetime-local" 
-                                                    value={editDraft.endTime ? editDraft.endTime.slice(0,16) : ""} 
+                                                    value={toLocalISO(editDraft.endTime)} 
                                                     onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} 
                                                     className="flex-1 text-[10px] py-1 bg-transparent"
                                                 />
