@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.3.5</title>
+    <title>时间炼金术 v1.3.6</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -74,8 +74,9 @@
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
                 try {
-                    // 1. 立即获取当前本地最新的记录快照，防止异步过程中数据丢失
-                    const localLogsAtStart = JSON.parse(localStorage.getItem('timeLogs') || '[]');
+                    // 1. 获取当前内存中最新的 logs 状态
+                    // 注意：如果是删除操作触发的，这里的 logs 已经是删除后的数组了
+                    const currentLocalLogs = [...logs];
                     
                     const timestamp = Date.now();
                     const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${timestamp}`, {
@@ -98,27 +99,21 @@
 
                     let finalLogs = [];
                     if (mode === 'pull') {
+                        // 强制拉取：完全以云端为准
                         finalLogs = cloudContent;
+                    } else if (silent === true) {
+                        // 2. 核心修复：如果是自动同步（silent=true，如删除、停止任务后触发）
+                        // 这种情况下，本地的状态是经过用户明确操作的“最终状态”，直接推送到云端
+                        finalLogs = currentLocalLogs;
                     } else {
-                        // 2. 核心修复：使用 Map 以 ID 为 Key 进行双向合并
-                        // 顺序：云端数据 -> 本地最新数据（本地新增会覆盖/补充到 Map 中）
+                        // 3. 手动同步（点击按钮触发）：执行合并逻辑
                         const uniqueMap = new Map();
-                        
-                        // 先放云端数据
-                        cloudContent.forEach(item => {
-                            if (item && item.id) uniqueMap.set(item.id, item);
-                        });
-                        
-                        // 再放本地数据（确保本地刚刚产生的记录一定存在）
-                        localLogsAtStart.forEach(item => {
-                            if (item && item.id) uniqueMap.set(item.id, item);
-                        });
-
-                        // 3. 转换为数组并重新按时间倒序排列
+                        cloudContent.forEach(item => { if (item && item.id) uniqueMap.set(item.id, item); });
+                        currentLocalLogs.forEach(item => { if (item && item.id) uniqueMap.set(item.id, item); });
                         finalLogs = Array.from(uniqueMap.values()).sort((a, b) => b.id - a.id);
                     }
 
-                    // 4. 将合并后的完整结果推送到云端
+                    // 4. 推送到云端
                     const updateResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
                         method: 'PATCH',
                         headers: { 
@@ -132,9 +127,11 @@
 
                     if (!updateResponse.ok) throw new Error(`写入失败: ${updateResponse.status}`);
 
-                    // 5. 更新本地状态
+                    // 5. 更新本地状态并确保持久化
                     setLogs(finalLogs);
-                    if (!silent) alert("云端双向同步完成");
+                    localStorage.setItem('timeLogs', JSON.stringify(finalLogs));
+                    
+                    if (!silent) alert("同步完成");
                 } catch (err) {
                     console.error("Sync Error:", err);
                     if (!silent) alert("同步异常: " + err.message);
@@ -142,7 +139,7 @@
                     setSyncing(false);
                 }
             };
-            
+
             const startTask = () => {
                 const now = new Date();
                 setActiveTask({ 
