@@ -26,9 +26,10 @@
         const { useState, useEffect, useMemo } = React;
 
         const CATEGORIES = {
-            CORE: { id: 'CORE', label: '核心产出', color: '#00ff41' },
-            OPS: { id: 'OPS', label: '交易运维', color: '#0ea5e9' },
+            CORE: { id: 'CORE', label: '交易研究', color: '#00ff41' },
+            AI: { id: 'AI', label: 'AI探索', color: '#0ea5e9' },
             FAMILY: { id: 'FAMILY', label: '家庭时光', color: '#ec4899' },
+            RECREATION: { id: 'RECREATION', label: '休闲娱乐', color: '#8b5cf6' },
             WASTE: { id: 'WASTE', label: '无效损耗', color: '#ef4444' },
             RECHARGE: { id: 'RECHARGE', label: '能量充电', color: '#eab308' },
             IDEA: { id: 'IDEA', label: '即时想法', color: '#eab308' }
@@ -215,10 +216,13 @@
 
             const formatDateTime = (isoString) => {
                 const date = new Date(isoString);
-                const now = new Date();
-                const isToday = date.toDateString() === now.toDateString();
-                const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                return isToday ? timeStr : `${date.getMonth()+1}/${date.getDate()} ${timeStr}`;
+                const M = date.getMonth() + 1;
+                const D = date.getDate();
+                const H = date.getHours().toString().padStart(2, '0');
+                const Min = date.getMinutes().toString().padStart(2, '0');
+                
+                // 统一格式：MM/DD HH:mm
+                return `${M}/${D} ${H}:${Min}`;
             };
 
             return (
