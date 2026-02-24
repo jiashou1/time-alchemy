@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>时间炼金术 v1.3 (Cloud Sync)</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'JetBrains+Mono', monospace; background-color: #0a0a0a; color: #00ff41; }
+        .glass { background: rgba(20, 20, 20, 0.8); backdrop-filter: blur(10px); border: 1px solid #333; }
+        input, select { background: #1a1a1a !important; color: #00ff41 !important; border: 1px solid #444 !important; border-radius: 4px; padding: 6px 10px; outline: none; }
+        input:focus { border-color: #00ff41 !important; }
+        .btn-action { padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; transition: all 0.2s; }
+        .sync-btn { border: 1px solid #00ff41; color: #00ff41; background: rgba(0, 255, 65, 0.1); }
+        .idea-card { border: 1px dashed #eab308; background: rgba(234, 179, 8, 0.05); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const CATEGORIES = {
+            CORE: { id: 'CORE', label: '核心产出', color: '#00ff41' },
+            OPS: { id: 'OPS', label: '交易运维', color: '#0ea5e9' },
+            FAMILY: { id: 'FAMILY', label: '家庭时光', color: '#ec4899' },
+            WASTE: { id: 'WASTE', label: '无效损耗', color: '#ef4444' },
+            RECHARGE: { id: 'RECHARGE', label: '能量充电', color: '#eab308' },
+            IDEA: { id: 'IDEA', label: '即时想法', color: '#eab308' }
+        };
+
+        const App = () => {
+            // 数据与配置状态
+            const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('timeLogs') || '[]'));
+            const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
+            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || '{"token":"","gistId":""}'));
+            
+            // UI 状态
+            const [showSettings, setShowSettings] = useState(false);
+            const [syncing, setSyncing] = useState(false);
+            const [feeling, setFeeling] = useState('');
+            const [ideaText, setIdeaText] = useState('');
+            const [scriptRoi, setScriptRoi] = useState(3);
+            const [currentCategory, setCurrentCategory] = useState('CORE');
+            const [editingId, setEditingId] = useState(null);
+            const [editDraft, setEditDraft] = useState(null);
+
+            // 本地持久化
+            useEffect(() => {
+                localStorage.setItem('timeLogs', JSON.stringify(logs));
+                localStorage.setItem('activeTask', JSON.stringify(activeTask));
+                localStorage.setItem('syncConfig', JSON.stringify(config));
+            }, [logs, activeTask, config]);
+
+            // --- GitHub 同步引擎 ---
+            const syncData = async (mode = 'sync') => {
+                if (!config.token || !config.gistId) {
+                    alert("请先配置 GitHub Token 和 Gist ID");
+                    setShowSettings(true);
+                    return;
+                }
+                setSyncing(true);
+                try {
+                    const timestamp = Date.now();
+                    const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${timestamp}`, {
+                        method: 'GET',
+                        headers: { 
+                            'Authorization': `token ${config.token}`,
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        cache: 'no-store'
+                    });
+
+                    if (!response.ok && response.status !== 304) {
+                        throw new Error(`连接 GitHub 失败: ${response.status}`);
+                    }
+
+                    let cloudContent = []; // 默认初始化为数组
+                    if (response.status === 200) {
+                        const gistData = await response.json();
+                        const fileContent = gistData.files['data.json']?.content;
+                        // 鲁棒性检查：只有当内容存在且解析后是数组时才赋值
+                        if (fileContent) {
+                            try {
+                                const parsed = JSON.parse(fileContent);
+                                cloudContent = Array.isArray(parsed) ? parsed : [];
+                            } catch (e) {
+                                console.warn("云端数据解析失败，重置为空数组");
+                                cloudContent = [];
+                            }
+                        }
+                    } else if (response.status === 304) {
+                        // 304 意味着云端和上次 fetch 到本地的缓存一致
+                        cloudContent = logs; 
+                    }
+
+                    // 再次确保 cloudContent 是数组，防止 spread 报错
+                    const safeCloudContent = Array.isArray(cloudContent) ? cloudContent : [];
+                    const safeLocalLogs = Array.isArray(logs) ? logs : [];
+
+                    let finalLogs;
+                    if (mode === 'pull') {
+                        finalLogs = safeCloudContent;
+                    } else {
+                        // 合并逻辑：去重并按 ID 降序排列
+                        const combined = [...safeLocalLogs, ...safeCloudContent];
+                        const uniqueMap = new Map();
+                        combined.forEach(item => {
+                            if (item && item.id) uniqueMap.set(item.id, item);
+                        });
+                        finalLogs = Array.from(uniqueMap.values()).sort((a, b) => b.id - a.id);
+                    }
+
+                    // 推送到云端
+                    const updateResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
+                        method: 'PATCH',
+                        headers: { 
+                            'Authorization': `token ${config.token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        body: JSON.stringify({
+                            files: { 'data.json': { content: JSON.stringify(finalLogs) } }
+                        })
+                    });
+
+                    if (!updateResponse.ok) {
+                        throw new Error(`云端写入失败: ${updateResponse.status}`);
+                    }
+
+                    setLogs(finalLogs);
+                    alert("同步成功！");
+                } catch (err) {
+                    console.error("Debug Details:", err);
+                    alert(`同步失败原因: ${err.message}`);
+                } finally {
+                    setSyncing(false);
+                }
+            };
+
+            // --- 业务逻辑 ---
+            const startTask = () => {
+                if (activeTask) stopTask();
+                const now = new Date();
+                setActiveTask({ id: Date.now(), category: currentCategory, startTime: now.toISOString(), scriptRoi: currentCategory === 'OPS' ? scriptRoi : null, feeling });
+                setFeeling('');
+            };
+
+            const stopTask = () => {
+                if (!activeTask) return;
+                const now = new Date();
+                const completedTask = { ...activeTask, endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)) };
+                setLogs([completedTask, ...logs]);
+                setActiveTask(null);
+            };
+
+            const saveQuickIdea = () => {
+                if (!ideaText.trim()) return;
+                const newIdea = { id: Date.now(), category: 'IDEA', startTime: new Date().toISOString(), feeling: ideaText, duration: 0 };
+                setLogs([newIdea, ...logs]);
+                setIdeaText('');
+            };
+
+            const analysis = useMemo(() => {
+                const last7Days = logs.filter(l => (new Date() - new Date(l.startTime)) < 7 * 24 * 60 * 60 * 1000);
+                const automationDebt = last7Days.filter(l => l.category === 'OPS' && l.scriptRoi >= 4).reduce((acc, l) => acc + (parseFloat(l.duration) || 0), 0);
+                const wasteTrigger = last7Days.filter(l => l.category === 'WASTE' && l.feeling).map(l => l.feeling).slice(0, 3).join(' | ');
+                return { automationDebt, wasteTrigger };
+            }, [logs]);
+
+            return (
+                <div className="max-w-md mx-auto p-4 pb-20 relative">
+                    {/* Header */}
+                    <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
+                        <div>
+                            <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 <span className="text-[10px] bg-[#333] px-1 rounded">V1.3 CLOUD</span></h1>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => syncData()} className="btn-action sync-btn">{syncing ? "同步中..." : "云同步"}</button>
+                            <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
+                        </div>
+                    </header>
+
+                    {/* Settings Modal */}
+                    {showSettings && (
+                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50">
+                            <h3 className="text-xs font-bold mb-4 uppercase text-blue-400">GitHub Gist 配置</h3>
+                            <div className="space-y-4">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-gray-500">GITHUB TOKEN</label>
+                                    <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="ghp_..." className="text-xs" />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-gray-500">GIST ID</label>
+                                    <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="32位字符串" className="text-xs" />
+                                </div>
+                                <div className="flex gap-2 pt-2">
+                                    <button onClick={() => syncData('pull')} className="btn-action cancel-btn flex-1">仅从云端拉取</button>
+                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1">保存并关闭</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {!editingId && !showSettings && (
+                        <div className="space-y-4 mb-6">
+                            <section className="glass p-4 rounded-xl border-dashed border-[#eab308]/40">
+                                <div className="flex gap-2">
+                                    <input type="text" placeholder="💡 灵感捕捉..." value={ideaText} onChange={e => setIdeaText(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveQuickIdea()} className="flex-1 text-xs" />
+                                    <button onClick={saveQuickIdea} className="bg-[#eab308] text-black px-3 py-1 rounded text-xs font-bold">保存</button>
+                                </div>
+                            </section>
+
+                            <section className="glass p-5 rounded-xl border-[#00ff41]/20">
+                                <div className="grid grid-cols-3 gap-2 mb-4">
+                                    {Object.values(CATEGORIES).filter(c => c.id !== 'IDEA').map(cat => (
+                                        <button key={cat.id} onClick={() => setCurrentCategory(cat.id)} className={`text-[10px] py-2 rounded border transition-all ${currentCategory === cat.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}>{cat.label}</button>
+                                    ))}
+                                </div>
+                                <div className="space-y-3">
+                                    <input type="text" placeholder="当前感受备注..." value={feeling} onChange={e => setFeeling(e.target.value)} className="w-full text-sm bg-transparent" />
+                                    {currentCategory === 'OPS' && (
+                                        <div className="flex items-center justify-between text-[10px] text-gray-400">
+                                            <span>自动化潜力: {scriptRoi}</span>
+                                            <input type="range" min="1" max="5" value={scriptRoi} onChange={e => setScriptRoi(parseInt(e.target.value))} />
+                                        </div>
+                                    )}
+                                    {!activeTask ? (
+                                        <button onClick={startTask} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始计时</button>
+                                    ) : (
+                                        <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止记录</button>
+                                    )}
+                                </div>
+                            </section>
+                        </div>
+                    )}
+
+                    {/* Stats */}
+                    <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="glass p-3 rounded-lg border-l-2 border-blue-500">
+                            <div className="text-[9px] text-gray-500 uppercase">自动化债务</div>
+                            <div className="text-lg font-bold">{(analysis.automationDebt / 60).toFixed(1)} <span className="text-xs">h</span></div>
+                        </div>
+                        <div className="glass p-3 rounded-lg border-l-2 border-red-500">
+                            <div className="text-[9px] text-gray-500 uppercase">黑洞分析</div>
+                            <div className="text-[9px] mt-1 text-gray-400 truncate italic">{analysis.wasteTrigger || "暂无数据"}</div>
+                        </div>
+                    </div>
+
+                    {/* Log Stream */}
+                    <section>
+                        <h2 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-tighter">Activity Stream</h2>
+                        <div className="space-y-3">
+                            {logs.map(log => (
+                                <div key={log.id} className={`glass p-4 rounded-xl transition-all ${log.category === 'IDEA' ? 'idea-card' : ''}`}>
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <div className="w-1 h-3 rounded-full" style={{backgroundColor: CATEGORIES[log.category]?.color}}></div>
+                                                <span className="text-xs font-bold" style={{color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
+                                                <span className="text-[9px] text-gray-600">{new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                            </div>
+                                            <div className="text-xs text-gray-300 italic">{log.feeling || "无内容"}</div>
+                                        </div>
+                                        {log.category !== 'IDEA' && (
+                                            <div className="pl-4 text-right">
+                                                <div className="text-sm font-bold">{log.duration}<span className="text-[9px] font-normal text-gray-600 ml-1">m</span></div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
