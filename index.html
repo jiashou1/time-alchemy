@@ -3,20 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.3.3 (Auto-Sync)</title>
+    <title>时间炼金术 v1.3.4</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'JetBrains+Mono', monospace; background-color: #0a0a0a; color: #00ff41; }
+        body { font-family: 'JetBrains+Mono', monospace; background-color: #0a0a0a; color: #00ff41; min-height: 100vh; }
         .glass { background: rgba(20, 20, 20, 0.8); backdrop-filter: blur(10px); border: 1px solid #333; }
         input, select { background: #1a1a1a !important; color: #00ff41 !important; border: 1px solid #444 !important; border-radius: 4px; padding: 6px 10px; outline: none; }
-        input:focus { border-color: #00ff41 !important; }
-        .btn-action { padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; transition: all 0.2s; }
+        .btn-action { padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; }
         .save-btn { background: #00ff41; color: #000; }
-        .cancel-btn { border: 1px solid #444; color: #666; }
         .sync-status { font-size: 10px; padding: 2px 6px; border-radius: 99px; }
         .idea-card { border: 1px dashed #eab308; background: rgba(234, 179, 8, 0.05); }
     </style>
@@ -25,7 +23,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+        const { useState, useEffect, useMemo } = React;
 
         const CATEGORIES = {
             CORE: { id: 'CORE', label: '核心产出', color: '#00ff41' },
@@ -37,27 +35,42 @@
         };
 
         const App = () => {
-            const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('timeLogs') || '[]'));
-            const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
-            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || '{"token":"","gistId":""}'));
+            // 强化的初始化逻辑，防止因旧数据导致黑屏
+            const [logs, setLogs] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('timeLogs');
+                    return saved ? JSON.parse(saved) : [];
+                } catch (e) { return []; }
+            });
+
+            const [activeTask, setActiveTask] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('activeTask');
+                    return saved && saved !== "null" ? JSON.parse(saved) : null;
+                } catch (e) { return null; }
+            });
+
+            const [config, setConfig] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('syncConfig');
+                    return saved ? JSON.parse(saved) : {token:"", gistId:""};
+                } catch (e) { return {token:"", gistId:""}; }
+            });
             
             const [showSettings, setShowSettings] = useState(false);
             const [syncing, setSyncing] = useState(false);
             const [feeling, setFeeling] = useState('');
             const [ideaText, setIdeaText] = useState('');
-            const [scriptRoi, setScriptRoi] = useState(3);
             const [currentCategory, setCurrentCategory] = useState('CORE');
             const [editingId, setEditingId] = useState(null);
             const [editDraft, setEditDraft] = useState(null);
 
-            // 本地持久化
             useEffect(() => {
                 localStorage.setItem('timeLogs', JSON.stringify(logs));
                 localStorage.setItem('activeTask', JSON.stringify(activeTask));
                 localStorage.setItem('syncConfig', JSON.stringify(config));
             }, [logs, activeTask, config]);
 
-            // --- 核心同步引擎 (带静默模式) ---
             const syncData = async (mode = 'sync', silent = false) => {
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
@@ -78,7 +91,7 @@
                         }
                     }
 
-                    let finalLogs;
+                    let finalLogs = [];
                     if (mode === 'pull') {
                         finalLogs = cloudContent;
                     } else {
@@ -95,31 +108,31 @@
                     });
 
                     setLogs(finalLogs);
-                    if (!silent) alert("云端数据已同步");
+                    if (!silent) alert("云端数据同步成功");
                 } catch (err) {
-                    console.error(err);
                     if (!silent) alert("同步失败: " + err.message);
                 } finally {
                     setSyncing(false);
                 }
             };
 
-            // --- 操作函数 (触发自动同步) ---
             const startTask = () => {
-                if (activeTask) stopTask();
                 const now = new Date();
-                setActiveTask({ id: Date.now(), category: currentCategory, startTime: now.toISOString(), scriptRoi: currentCategory === 'OPS' ? scriptRoi : null, feeling });
+                setActiveTask({ id: Date.now(), category: currentCategory, startTime: now.toISOString(), feeling });
                 setFeeling('');
             };
 
             const stopTask = () => {
                 if (!activeTask) return;
                 const now = new Date();
-                const completedTask = { ...activeTask, endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)) };
-                const newLogs = [completedTask, ...logs];
-                setLogs(newLogs);
+                const completedTask = { 
+                    ...activeTask, 
+                    endTime: now.toISOString(), 
+                    duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)) 
+                };
+                setLogs([completedTask, ...logs]);
                 setActiveTask(null);
-                setTimeout(() => syncData('sync', true), 500); // 停止后自动静默同步
+                setTimeout(() => syncData('sync', true), 500);
             };
 
             const saveQuickIdea = () => {
@@ -127,10 +140,96 @@
                 const newIdea = { id: Date.now(), category: 'IDEA', startTime: new Date().toISOString(), feeling: ideaText, duration: 0 };
                 setLogs([newIdea, ...logs]);
                 setIdeaText('');
-                setTimeout(() => syncData('sync', true), 500); // 保存想法后同步
+                setTimeout(() => syncData('sync', true), 500);
             };
 
-            const openEdit = (log) => {
-                setEditingId(log.id);
-                setEditDraft({ ...log });
+            const saveEdit = () => {
+                const newLogs = logs.map(l => l.id === editingId ? editDraft : l);
+                setLogs(newLogs);
+                setEditingId(null);
+                setEditDraft(null);
+                setTimeout(() => syncData('sync', true), 500);
             };
+
+            return (
+                <div className="max-w-md mx-auto p-4 pb-20">
+                    <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.3.4</h1>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
+                            <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500">⚙️</button>
+                        </div>
+                    </header>
+
+                    {showSettings && (
+                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50">
+                            <h3 className="text-xs font-bold mb-4 text-blue-400">配置同步</h3>
+                            <div className="space-y-4">
+                                <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full text-xs" />
+                                <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full text-xs" />
+                                <div className="flex gap-2">
+                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1">拉取云端</button>
+                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1">完成</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {!editingId && (
+                        <div className="space-y-4 mb-8">
+                            <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex gap-2">
+                                <input type="text" placeholder="💡 灵感想法..." value={ideaText} onChange={e => setIdeaText(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveQuickIdea()} className="flex-1 text-xs" />
+                                <button onClick={saveQuickIdea} className="bg-[#eab308] text-black px-3 py-1 rounded text-xs font-bold">记下</button>
+                            </div>
+
+                            <div className="glass p-5 rounded-xl border-[#00ff41]/20">
+                                <div className="grid grid-cols-3 gap-2 mb-4">
+                                    {Object.values(CATEGORIES).filter(c => c.id !== 'IDEA').map(cat => (
+                                        <button key={cat.id} onClick={() => setCurrentCategory(cat.id)} className={`text-[10px] py-2 rounded border transition-all ${currentCategory === cat.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}>{cat.label}</button>
+                                    ))}
+                                </div>
+                                <input type="text" placeholder="备注内容..." value={feeling} onChange={e => setFeeling(e.target.value)} className="w-full text-sm mb-4 bg-transparent" />
+                                {!activeTask ? (
+                                    <button onClick={startTask} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始任务</button>
+                                ) : (
+                                    <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止并同步</button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="space-y-3">
+                        {logs.map(log => (
+                            <div key={log.id} className={`glass p-4 rounded-xl ${log.category === 'IDEA' ? 'idea-card' : ''}`}>
+                                {editingId === log.id ? (
+                                    <div className="space-y-3">
+                                        <input type="text" value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs" />
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500">取消</button>
+                                            <button onClick={saveEdit} className="text-[10px] text-[#00ff41]">保存</button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex justify-between items-center">
+                                        <div onClick={() => { setEditingId(log.id); setEditDraft(log); }} className="flex-1 cursor-pointer">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-[9px] font-bold" style={{color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
+                                                <span className="text-[9px] text-gray-600">{new Date(log.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                            </div>
+                                            <div className="text-xs text-gray-300">{log.feeling || "..." }</div>
+                                        </div>
+                                        {log.category !== 'IDEA' && <div className="text-sm font-bold ml-4">{log.duration}m</div>}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
