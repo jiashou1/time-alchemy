@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.3.7</title>
+    <title>时间炼金术 v1.3.8</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -24,7 +24,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect } = React;
 
         const CATEGORIES = {
             CORE: { id: 'CORE', label: '交易研究', color: '#00ff41' },
@@ -65,8 +65,6 @@
             const [currentCategory, setCurrentCategory] = useState('CORE');
             const [editingId, setEditingId] = useState(null);
             const [editDraft, setEditDraft] = useState(null);
-
-            // 补录相关状态
             const [showBackfill, setShowBackfill] = useState(false);
             const [backfillData, setBackfillData] = useState({ start: "", end: "" });
 
@@ -127,7 +125,7 @@
 
                     setLogs(finalLogs);
                     localStorage.setItem('timeLogs', JSON.stringify(finalLogs));
-                    if (!silent) alert("云端同步完成");
+                    if (!silent) alert("云端同步成功");
                 } catch (err) {
                     if (!silent) alert("同步异常: " + err.message);
                 } finally {
@@ -195,7 +193,16 @@
             };
 
             const saveEdit = () => {
-                const updatedDraft = { ...editDraft, updatedAt: Date.now() };
+                const s = new Date(editDraft.startTime);
+                const e = new Date(editDraft.endTime);
+                const newDuration = Math.max(1, Math.round((e - s) / 1000 / 60));
+                
+                const updatedDraft = { 
+                    ...editDraft, 
+                    duration: editDraft.category === 'IDEA' ? 0 : newDuration,
+                    updatedAt: Date.now() 
+                };
+                
                 const newLogs = logs.map(l => l.id === editingId ? updatedDraft : l);
                 setLogs(newLogs);
                 setEditingId(null);
@@ -214,6 +221,7 @@
             };
 
             const formatDateTime = (isoString) => {
+                if(!isoString) return "--:--";
                 const date = new Date(isoString);
                 return `${date.getMonth()+1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
             };
@@ -221,7 +229,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.3.7</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.3.8</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -300,19 +308,33 @@
                                             <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs flex-1">
                                                 {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                                             </select>
-                                            {editDraft.category !== 'IDEA' && (
-                                                <div className="flex items-center gap-1">
-                                                    <input type="number" value={editDraft.duration} onChange={e => setEditDraft({...editDraft, duration: parseInt(e.target.value) || 0})} className="w-16 text-xs text-center" />
-                                                    <span className="text-[10px] text-gray-500">min</span>
-                                                </div>
-                                            )}
+                                        </div>
+                                        <div className="space-y-2 bg-black/20 p-2 rounded border border-gray-800">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[9px] text-gray-500 w-8">开始</span>
+                                                <input 
+                                                    type="datetime-local" 
+                                                    value={editDraft.startTime.slice(0,16)} 
+                                                    onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} 
+                                                    className="flex-1 text-[10px] py-1 bg-transparent"
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[9px] text-gray-500 w-8">结束</span>
+                                                <input 
+                                                    type="datetime-local" 
+                                                    value={editDraft.endTime ? editDraft.endTime.slice(0,16) : ""} 
+                                                    onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} 
+                                                    className="flex-1 text-[10px] py-1 bg-transparent"
+                                                />
+                                            </div>
                                         </div>
                                         <input type="text" value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs" />
                                         <div className="flex justify-between items-center">
                                             <button onClick={() => deleteLog(log.id)} className="text-[10px] text-red-500">删除</button>
                                             <div className="flex gap-2">
                                                 <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button>
-                                                <button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存</button>
+                                                <button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存修改</button>
                                             </div>
                                         </div>
                                     </div>
