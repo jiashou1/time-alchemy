@@ -74,9 +74,15 @@
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
                 try {
+                    // 1. 立即获取当前本地最新的记录快照，防止异步过程中数据丢失
+                    const localLogsAtStart = JSON.parse(localStorage.getItem('timeLogs') || '[]');
+                    
                     const timestamp = Date.now();
                     const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${timestamp}`, {
-                        headers: { 'Authorization': `token ${config.token}`, 'Accept': 'application/vnd.github.v3+json' },
+                        headers: { 
+                            'Authorization': `token ${config.token}`, 
+                            'Accept': 'application/vnd.github.v3+json' 
+                        },
                         cache: 'no-store'
                     });
 
@@ -94,33 +100,49 @@
                     if (mode === 'pull') {
                         finalLogs = cloudContent;
                     } else {
-                        // 优化后的合并逻辑：确保本地和云端数据均保留
-                        const combined = [...logs, ...cloudContent];
+                        // 2. 核心修复：使用 Map 以 ID 为 Key 进行双向合并
+                        // 顺序：云端数据 -> 本地最新数据（本地新增会覆盖/补充到 Map 中）
                         const uniqueMap = new Map();
-                        combined.forEach(item => { 
-                            if (item && item.id) {
-                                // 如果 ID 重复，保留内容较完整的或以本地为准
-                                uniqueMap.set(item.id, item); 
-                            }
+                        
+                        // 先放云端数据
+                        cloudContent.forEach(item => {
+                            if (item && item.id) uniqueMap.set(item.id, item);
                         });
+                        
+                        // 再放本地数据（确保本地刚刚产生的记录一定存在）
+                        localLogsAtStart.forEach(item => {
+                            if (item && item.id) uniqueMap.set(item.id, item);
+                        });
+
+                        // 3. 转换为数组并重新按时间倒序排列
                         finalLogs = Array.from(uniqueMap.values()).sort((a, b) => b.id - a.id);
                     }
 
-                    await fetch(`https://api.github.com/gists/${config.gistId}`, {
+                    // 4. 将合并后的完整结果推送到云端
+                    const updateResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
                         method: 'PATCH',
-                        headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ files: { 'data.json': { content: JSON.stringify(finalLogs) } } })
+                        headers: { 
+                            'Authorization': `token ${config.token}`, 
+                            'Content-Type': 'application/json' 
+                        },
+                        body: JSON.stringify({ 
+                            files: { 'data.json': { content: JSON.stringify(finalLogs) } } 
+                        })
                     });
 
+                    if (!updateResponse.ok) throw new Error(`写入失败: ${updateResponse.status}`);
+
+                    // 5. 更新本地状态
                     setLogs(finalLogs);
-                    if (!silent) alert("云端数据同步完成");
+                    if (!silent) alert("云端双向同步完成");
                 } catch (err) {
+                    console.error("Sync Error:", err);
                     if (!silent) alert("同步异常: " + err.message);
                 } finally {
                     setSyncing(false);
                 }
             };
-
+            
             const startTask = () => {
                 const now = new Date();
                 setActiveTask({ 
