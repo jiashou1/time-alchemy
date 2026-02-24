@@ -145,7 +145,7 @@
                     setSyncing(false);
                 }
             };
-            
+
             const startTask = () => {
                 const now = new Date();
                 setActiveTask({ 
@@ -198,11 +198,17 @@
 
             const deleteLog = (id) => {
                 if(window.confirm("确定删除这条记录吗？")) {
-                    // 墓碑机制：标记 deleted 为 true，并更新 updatedAt
+                    // 1. 墓碑机制标记删除
                     const newLogs = logs.map(l => 
                         l.id === id ? { ...l, deleted: true, updatedAt: Date.now() } : l
                     );
                     setLogs(newLogs);
+                    
+                    // 2. 核心优化：删除后立即重置编辑状态，返回主列表页面
+                    setEditingId(null);
+                    setEditDraft(null);
+                    
+                    // 3. 触发自动同步
                     setTimeout(() => syncData('sync', true), 500);
                 }
             };
