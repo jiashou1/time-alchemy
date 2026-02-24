@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.3.9</title>
+    <title>时间炼金术 v1.4.0</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -24,7 +24,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useMemo } = React;
 
         const CATEGORIES = {
             CORE: { id: 'CORE', label: '交易研究', color: '#00ff41' },
@@ -74,12 +74,28 @@
                 localStorage.setItem('syncConfig', JSON.stringify(config));
             }, [logs, activeTask, config]);
 
-            // 核心时区转换函数：ISO(UTC) -> 本地时间字符串 (YYYY-MM-DDTHH:mm)
+            // 时间排序逻辑优化
+            const sortedLogs = useMemo(() => {
+                return [...logs].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+            }, [logs]);
+
             const toLocalISO = (isoString) => {
                 if (!isoString) return "";
                 const date = new Date(isoString);
                 const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
                 return localDate.toISOString().slice(0, 16);
+            };
+
+            const formatTimeOnly = (isoString) => {
+                if(!isoString) return "--:--";
+                const date = new Date(isoString);
+                return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            };
+
+            const formatDateTime = (isoString) => {
+                if(!isoString) return "--/-- --:--";
+                const date = new Date(isoString);
+                return `${date.getMonth()+1}/${date.getDate()} ${formatTimeOnly(isoString)}`;
             };
 
             const initBackfillTime = () => {
@@ -98,17 +114,12 @@
                         headers: { 'Authorization': `token ${config.token}`, 'Accept': 'application/vnd.github.v3+json' },
                         cache: 'no-store'
                     });
-
                     let cloudContent = [];
                     if (response.ok) {
                         const gistData = await response.json();
                         const fileContent = gistData.files['data.json']?.content;
-                        if (fileContent) {
-                            const parsed = JSON.parse(fileContent);
-                            cloudContent = Array.isArray(parsed) ? parsed : [];
-                        }
+                        if (fileContent) cloudContent = JSON.parse(fileContent);
                     }
-
                     let finalLogs = [];
                     if (mode === 'pull') {
                         finalLogs = cloudContent;
@@ -121,23 +132,18 @@
                             const existingTime = existing ? (existing.updatedAt || existing.id) : 0;
                             if (!existing || itemTime >= existingTime) uniqueMap.set(item.id, item);
                         });
-                        finalLogs = Array.from(uniqueMap.values()).sort((a, b) => b.id - a.id);
+                        finalLogs = Array.from(uniqueMap.values());
                     }
-
                     await fetch(`https://api.github.com/gists/${config.gistId}`, {
                         method: 'PATCH',
                         headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify({ files: { 'data.json': { content: JSON.stringify(finalLogs) } } })
                     });
-
                     setLogs(finalLogs);
-                    localStorage.setItem('timeLogs', JSON.stringify(finalLogs));
                     if (!silent) alert("云端同步成功");
                 } catch (err) {
-                    if (!silent) alert("同步异常: " + err.message);
-                } finally {
-                    setSyncing(false);
-                }
+                    if (!silent) alert("同步失败: " + err.message);
+                } finally { setSyncing(false); }
             };
 
             const handleBackfill = (minutes = null) => {
@@ -151,41 +157,23 @@
                     const s = new Date(backfillData.start);
                     const e = new Date(backfillData.end);
                     duration = Math.max(1, Math.round((e - s) / 1000 / 60));
-                    start = s.toISOString();
-                    end = e.toISOString();
+                    start = s.toISOString(); end = e.toISOString();
                 }
-
-                const newLog = {
-                    id: Date.now(),
-                    category: currentCategory,
-                    startTime: start,
-                    endTime: end,
-                    duration: duration,
-                    feeling: feeling || "补录记录",
-                    updatedAt: Date.now()
-                };
-
+                const newLog = { id: Date.now(), category: currentCategory, startTime: start, endTime: end, duration, feeling: feeling || "补录记录", updatedAt: Date.now() };
                 setLogs([newLog, ...logs]);
-                setFeeling('');
-                setShowBackfill(false);
+                setFeeling(''); setShowBackfill(false);
                 setTimeout(() => syncData('sync', true), 500);
             };
 
             const startTask = () => {
-                const now = new Date();
-                setActiveTask({ id: Date.now(), category: currentCategory, startTime: now.toISOString(), feeling, updatedAt: Date.now() });
+                setActiveTask({ id: Date.now(), category: currentCategory, startTime: new Date().toISOString(), feeling, updatedAt: Date.now() });
                 setFeeling('');
             };
 
             const stopTask = () => {
                 if (!activeTask) return;
                 const now = new Date();
-                const completedTask = { 
-                    ...activeTask, 
-                    endTime: now.toISOString(), 
-                    duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)),
-                    updatedAt: Date.now()
-                };
+                const completedTask = { ...activeTask, endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), updatedAt: Date.now() };
                 setLogs([completedTask, ...logs]);
                 setActiveTask(null);
                 setTimeout(() => syncData('sync', true), 500);
@@ -193,7 +181,7 @@
 
             const saveQuickIdea = () => {
                 if (!ideaText.trim()) return;
-                const newIdea = { id: Date.now(), category: 'IDEA', startTime: new Date().toISOString(), feeling: ideaText, duration: 0, updatedAt: Date.now() };
+                const newIdea = { id: Date.now(), category: 'IDEA', startTime: new Date().toISOString(), endTime: new Date().toISOString(), feeling: ideaText, duration: 0, updatedAt: Date.now() };
                 setLogs([newIdea, ...logs]);
                 setIdeaText('');
                 setTimeout(() => syncData('sync', true), 500);
@@ -203,40 +191,24 @@
                 const s = new Date(editDraft.startTime);
                 const e = new Date(editDraft.endTime);
                 const newDuration = Math.max(1, Math.round((e - s) / 1000 / 60));
-                
-                const updatedDraft = { 
-                    ...editDraft, 
-                    duration: editDraft.category === 'IDEA' ? 0 : newDuration,
-                    updatedAt: Date.now() 
-                };
-                
-                const newLogs = logs.map(l => l.id === editingId ? updatedDraft : l);
-                setLogs(newLogs);
+                const updatedDraft = { ...editDraft, duration: editDraft.category === 'IDEA' ? 0 : newDuration, updatedAt: Date.now() };
+                setLogs(logs.map(l => l.id === editingId ? updatedDraft : l));
                 setEditingId(null);
-                setEditDraft(null);
                 setTimeout(() => syncData('sync', true), 500);
             };
 
             const deleteLog = (id) => {
-                if(window.confirm("确定删除这条记录吗？")) {
-                    const newLogs = logs.map(l => l.id === id ? { ...l, deleted: true, updatedAt: Date.now() } : l);
-                    setLogs(newLogs);
+                if(window.confirm("确定删除吗？")) {
+                    setLogs(logs.map(l => l.id === id ? { ...l, deleted: true, updatedAt: Date.now() } : l));
                     setEditingId(null);
-                    setEditDraft(null);
                     setTimeout(() => syncData('sync', true), 500);
                 }
-            };
-
-            const formatDateTime = (isoString) => {
-                if(!isoString) return "--:--";
-                const date = new Date(isoString);
-                return `${date.getMonth()+1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
             };
 
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.3.9</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.0</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -244,14 +216,13 @@
                     </header>
 
                     {showSettings && (
-                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50">
-                            <h3 className="text-xs font-bold mb-4 text-blue-400">配置中心</h3>
+                        <div className="glass p-5 rounded-xl mb-6">
                             <div className="space-y-4">
                                 <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full text-xs" />
                                 <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full text-xs" />
                                 <div className="flex gap-2">
-                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1">拉取云端</button>
-                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1">保存并关闭</button>
+                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1">从云端覆盖本地</button>
+                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1">保存</button>
                                 </div>
                             </div>
                         </div>
@@ -276,72 +247,54 @@
                                     <div className="space-y-3">
                                         <button onClick={startTask} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始记录</button>
                                         <div className="flex justify-center">
-                                            <button onClick={() => { setShowBackfill(!showBackfill); initBackfillTime(); }} className="text-[10px] text-gray-500 border-b border-gray-800 pb-0.5">+ 忘记开启？点击补录</button>
+                                            <button onClick={() => { setShowBackfill(!showBackfill); initBackfillTime(); }} className="text-[10px] text-gray-500 border-b border-gray-800 pb-0.5">+ 补录历史</button>
                                         </div>
                                         {showBackfill && (
                                             <div className="mt-4 pt-4 border-t border-gray-800">
                                                 <div className="flex gap-2 mb-4">
                                                     {[15, 30, 60].map(m => (
-                                                        <button key={m} onClick={() => handleBackfill(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px] hover:border-[#eab308] hover:text-[#eab308]">{m >= 60 ? '1h' : m+'m'}前</button>
+                                                        <button key={m} onClick={() => handleBackfill(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px]">{m >= 60 ? '1h' : m+'m'}前</button>
                                                     ))}
                                                 </div>
                                                 <div className="space-y-2 mb-4">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-[9px] text-gray-600 w-8">开始</span>
+                                                        <span className="text-[9px] text-gray-500 w-8">开始</span>
                                                         <input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1 text-[10px] py-1" />
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-[9px] text-gray-600 w-8">结束</span>
+                                                        <span className="text-[9px] text-gray-500 w-8">结束</span>
                                                         <input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1 text-[10px] py-1" />
                                                     </div>
                                                 </div>
-                                                <button onClick={() => handleBackfill()} className="w-full py-2 bg-gray-800 text-[#eab308] rounded text-[10px] font-bold border border-[#eab308]/30">确认自定义补录</button>
+                                                <button onClick={() => handleBackfill()} className="w-full py-2 bg-gray-800 text-[#eab308] rounded text-[10px] font-bold border border-[#eab308]/30">确认补录</button>
                                             </div>
                                         )}
                                     </div>
                                 ) : (
-                                    <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止并同步</button>
+                                    <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止记录并同步</button>
                                 )}
                             </div>
                         </div>
                     )}
 
                     <div className="space-y-3">
-                        {logs.filter(l => !l.deleted).map(log => (
+                        {sortedLogs.filter(l => !l.deleted).map(log => (
                             <div key={log.id} className={`glass p-4 rounded-xl ${log.category === 'IDEA' ? 'idea-card' : ''}`}>
                                 {editingId === log.id ? (
                                     <div className="space-y-4">
-                                        <div className="flex gap-2">
-                                            <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs flex-1">
-                                                {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="space-y-2 bg-black/20 p-2 rounded border border-gray-800">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[9px] text-gray-500 w-8">开始</span>
-                                                <input 
-                                                    type="datetime-local" 
-                                                    value={toLocalISO(editDraft.startTime)} 
-                                                    onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} 
-                                                    className="flex-1 text-[10px] py-1 bg-transparent"
-                                                />
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[9px] text-gray-500 w-8">结束</span>
-                                                <input 
-                                                    type="datetime-local" 
-                                                    value={toLocalISO(editDraft.endTime)} 
-                                                    onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} 
-                                                    className="flex-1 text-[10px] py-1 bg-transparent"
-                                                />
-                                            </div>
+                                        <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs w-full">
+                                            {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                                        </select>
+                                        <div className="space-y-2 bg-black/20 p-2 rounded">
+                                            <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px]" />
+                                            <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px]" />
                                         </div>
                                         <input type="text" value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs" />
                                         <div className="flex justify-between items-center">
                                             <button onClick={() => deleteLog(log.id)} className="text-[10px] text-red-500">删除</button>
                                             <div className="flex gap-2">
-                                                <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button>
-                                                <button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存修改</button>
+                                                <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500">取消</button>
+                                                <button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存</button>
                                             </div>
                                         </div>
                                     </div>
@@ -350,7 +303,9 @@
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-[9px] font-bold px-1 rounded" style={{backgroundColor: CATEGORIES[log.category]?.color + '22', color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
-                                                <span className="text-[9px] text-gray-600 font-bold">{formatDateTime(log.startTime)}</span>
+                                                <span className="text-[9px] text-gray-600 font-bold">
+                                                    {log.category === 'IDEA' ? formatDateTime(log.startTime) : `${formatDateTime(log.startTime)} - ${formatTimeOnly(log.endTime)}`}
+                                                </span>
                                             </div>
                                             <div className="text-xs text-gray-300 leading-relaxed">{log.feeling || "..." }</div>
                                         </div>
@@ -366,7 +321,6 @@
                 </div>
             );
         };
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
