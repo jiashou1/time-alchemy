@@ -71,11 +71,14 @@
             }, [logs, activeTask, config]);
 
             // --- 核心同步逻辑：LWW (Last Write Wins) 策略 ---
+            // --- 核心同步逻辑修复：绕过 React 闭包，直接读取物理存储 ---
             const syncData = async (mode = 'sync', silent = false) => {
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
                 try {
-                    const currentLocalLogs = [...logs];
+                    // 1. 关键修复：直接从 localStorage 读取最新数据，确保包含刚刚的操作
+                    const currentLocalLogs = JSON.parse(localStorage.getItem('timeLogs') || '[]');
+                    
                     const timestamp = Date.now();
                     const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${timestamp}`, {
                         headers: { 'Authorization': `token ${config.token}`, 'Accept': 'application/vnd.github.v3+json' },
@@ -96,38 +99,53 @@
                     if (mode === 'pull') {
                         finalLogs = cloudContent;
                     } else {
-                        // 基于 ID 和 updatedAt 进行冲突裁决
+                        // 2. LWW (Last Write Wins) 冲突裁决策略
                         const uniqueMap = new Map();
+                        
+                        // 先放云端数据，再放本地最新数据
+                        // 如果 ID 相同，updatedAt 更大的（即更新的）会覆盖旧的
                         [...cloudContent, ...currentLocalLogs].forEach(item => {
                             if (!item || !item.id) return;
                             const existing = uniqueMap.get(item.id);
-                            // 如果该 ID 尚未记录，或当前 item 的 updatedAt 晚于已记录的 item
                             const itemTime = item.updatedAt || item.id;
                             const existingTime = existing ? (existing.updatedAt || existing.id) : 0;
                             
-                            if (!existing || itemTime > existingTime) {
+                            // 只有当条目更新，或原本不存在时才写入
+                            if (!existing || itemTime >= existingTime) {
                                 uniqueMap.set(item.id, item);
                             }
                         });
                         finalLogs = Array.from(uniqueMap.values()).sort((a, b) => b.id - a.id);
                     }
 
-                    await fetch(`https://api.github.com/gists/${config.gistId}`, {
+                    // 3. 将合并后的最终状态推向云端
+                    const updateResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
                         method: 'PATCH',
-                        headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ files: { 'data.json': { content: JSON.stringify(finalLogs) } } })
+                        headers: { 
+                            'Authorization': `token ${config.token}`, 
+                            'Content-Type': 'application/json' 
+                        },
+                        body: JSON.stringify({ 
+                            files: { 'data.json': { content: JSON.stringify(finalLogs) } } 
+                        })
                     });
 
+                    if (!updateResponse.ok) throw new Error("Gist 写入失败");
+
+                    // 4. 反向更新 React 状态，保持 UI 一致
                     setLogs(finalLogs);
+                    // 同时也确保本地持久化（双保险）
+                    localStorage.setItem('timeLogs', JSON.stringify(finalLogs));
+                    
                     if (!silent) alert("云端数据同步完成");
                 } catch (err) {
-                    console.error("Sync Logic Error:", err);
+                    console.error("Sync Error:", err);
                     if (!silent) alert("同步异常: " + err.message);
                 } finally {
                     setSyncing(false);
                 }
             };
-
+            
             const startTask = () => {
                 const now = new Date();
                 setActiveTask({ 
