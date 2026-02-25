@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.4.1</title>
+    <title>时间炼金术 v1.4.2</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -103,6 +103,15 @@
                 setBackfillData({ start: toLocalISO(oneHourAgo.toISOString()), end: toLocalISO(now.toISOString()) });
             };
 
+            const handleQuickTime = (minutes) => {
+                const now = new Date();
+                const start = new Date(now.getTime() - minutes * 60 * 1000);
+                setBackfillData({ 
+                    start: toLocalISO(start.toISOString()), 
+                    end: toLocalISO(now.toISOString()) 
+                });
+            };
+
             const syncData = async (mode = 'sync', silent = false) => {
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
@@ -145,22 +154,22 @@
                 } finally { setSyncing(false); }
             };
 
-            const handleBackfill = (minutes = null) => {
-                let start, end, duration;
-                if (minutes) {
-                    const now = new Date();
-                    end = now.toISOString();
-                    start = new Date(now.getTime() - minutes * 60 * 1000).toISOString();
-                    duration = minutes;
-                } else {
-                    const s = new Date(backfillData.start);
-                    const e = new Date(backfillData.end);
-                    duration = Math.max(1, Math.round((e - s) / 1000 / 60));
-                    start = s.toISOString(); end = e.toISOString();
-                }
-                const newLog = { id: Date.now(), category: currentCategory, startTime: start, endTime: end, duration, feeling: feeling || "", updatedAt: Date.now() };
+            const confirmBackfill = () => {
+                const s = new Date(backfillData.start);
+                const e = new Date(backfillData.end);
+                const duration = Math.max(1, Math.round((e - s) / 1000 / 60));
+                const newLog = { 
+                    id: Date.now(), 
+                    category: currentCategory, 
+                    startTime: s.toISOString(), 
+                    endTime: e.toISOString(), 
+                    duration, 
+                    feeling: feeling || "", 
+                    updatedAt: Date.now() 
+                };
                 setLogs([newLog, ...logs]);
-                setFeeling(''); setShowBackfill(false);
+                setFeeling(''); 
+                setShowBackfill(false);
                 setTimeout(() => syncData('sync', true), 500);
             };
 
@@ -174,14 +183,14 @@
                 const now = new Date();
                 const completedTask = { 
                     ...activeTask, 
-                    feeling: feeling || activeTask.feeling || "", // 修复：保存输入框文字
+                    feeling: feeling || activeTask.feeling || "", 
                     endTime: now.toISOString(), 
                     duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), 
                     updatedAt: Date.now() 
                 };
                 setLogs([completedTask, ...logs]);
                 setActiveTask(null);
-                setFeeling(''); // 修复：重置输入框
+                setFeeling(''); 
                 setTimeout(() => syncData('sync', true), 500);
             };
 
@@ -214,7 +223,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.1</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.2</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -227,7 +236,7 @@
                                 <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full text-xs" />
                                 <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full text-xs" />
                                 <div className="flex gap-2">
-                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1 text-[10px]">从云端同步本地</button>
+                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1 text-[10px]">从云端覆盖本地</button>
                                     <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1 text-[10px]">保存配置</button>
                                 </div>
                             </div>
@@ -265,7 +274,7 @@
                                             <div className="mt-4 pt-4 border-t border-gray-800">
                                                 <div className="flex gap-2 mb-4">
                                                     {[15, 30, 60].map(m => (
-                                                        <button key={m} onClick={() => handleBackfill(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px]">{m >= 60 ? '1h' : m+'m'}前</button>
+                                                        <button key={m} onClick={() => handleQuickTime(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px] hover:border-[#00ff41] hover:text-[#00ff41] transition-colors">{m >= 60 ? '1h' : m+'m'}前</button>
                                                     ))}
                                                 </div>
                                                 <div className="space-y-2 mb-4 text-[10px]">
@@ -278,7 +287,7 @@
                                                         <input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1 py-1" />
                                                     </div>
                                                 </div>
-                                                <button onClick={() => handleBackfill()} className="w-full py-2 bg-gray-800 text-[#eab308] rounded text-[10px] font-bold border border-[#eab308]/30">确认补录</button>
+                                                <button onClick={confirmBackfill} className="w-full py-2 bg-gray-800 text-[#00ff41] rounded text-[10px] font-bold border border-[#00ff41]/30">确认补录</button>
                                             </div>
                                         )}
                                     </div>
