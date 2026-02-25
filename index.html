@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.4.2</title>
+    <title>时间炼金术 v1.4.3</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -97,12 +97,6 @@
                 return `${date.getMonth()+1}/${date.getDate()} ${formatTimeOnly(isoString)}`;
             };
 
-            const initBackfillTime = () => {
-                const now = new Date();
-                const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-                setBackfillData({ start: toLocalISO(oneHourAgo.toISOString()), end: toLocalISO(now.toISOString()) });
-            };
-
             const handleQuickTime = (minutes) => {
                 const now = new Date();
                 const start = new Date(now.getTime() - minutes * 60 * 1000);
@@ -110,6 +104,40 @@
                     start: toLocalISO(start.toISOString()), 
                     end: toLocalISO(now.toISOString()) 
                 });
+            };
+
+            const exportData = () => {
+                let lastDate = "";
+                const exportText = sortedLogs
+                    .filter(log => !log.deleted)
+                    .map(log => {
+                        const dateObj = new Date(log.startTime);
+                        const currentDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
+                        let datePrefix = "";
+                        
+                        if (currentDate !== lastDate) {
+                            datePrefix = `\n[--- ${currentDate} ---]\n`;
+                            lastDate = currentDate;
+                        }
+
+                        if (log.category === 'IDEA') {
+                            return `${datePrefix}${formatTimeOnly(log.startTime)} | ${log.feeling}`;
+                        } else {
+                            return `${datePrefix}${formatTimeOnly(log.startTime)} | ${formatTimeOnly(log.endTime)} | ${CATEGORIES[log.category]?.label} | ${log.feeling}`;
+                        }
+                    }).join('\n');
+
+                const textArea = document.createElement("textarea");
+                textArea.value = exportText.trim();
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    alert("已按照时间倒序格式复制到剪贴板！");
+                } catch (err) {
+                    alert("复制失败，请尝试手动复制。");
+                }
+                document.body.removeChild(textArea);
             };
 
             const syncData = async (mode = 'sync', silent = false) => {
@@ -183,6 +211,7 @@
                 const now = new Date();
                 const completedTask = { 
                     ...activeTask, 
+                    category: currentCategory, // 修复：捕获停止时的最新分类
                     feeling: feeling || activeTask.feeling || "", 
                     endTime: now.toISOString(), 
                     duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), 
@@ -223,7 +252,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.2</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.3</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -232,12 +261,12 @@
 
                     {showSettings && (
                         <div className="glass p-5 rounded-xl mb-6 border-blue-500/50">
-                            <div className="space-y-4">
-                                <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full text-xs" />
-                                <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full text-xs" />
+                            <div className="space-y-4 text-xs">
+                                <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full" />
+                                <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full" />
                                 <div className="flex gap-2">
-                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1 text-[10px]">从云端覆盖本地</button>
-                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1 text-[10px]">保存配置</button>
+                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1">覆盖本地</button>
+                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1">完成</button>
                                 </div>
                             </div>
                         </div>
@@ -258,7 +287,7 @@
                                 </div>
                                 <input 
                                     type="text" 
-                                    placeholder={activeTask ? "正在记录：补充复盘心得..." : "记录此刻内容..."} 
+                                    placeholder={activeTask ? "正在计时：随时补充进展..." : "记录此刻内容..."} 
                                     value={feeling} 
                                     onChange={e => setFeeling(e.target.value)} 
                                     className="w-full text-sm mb-4 bg-transparent border-b border-gray-800 pb-1" 
@@ -268,35 +297,34 @@
                                     <div className="space-y-3">
                                         <button onClick={startTask} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始记录</button>
                                         <div className="flex justify-center">
-                                            <button onClick={() => { setShowBackfill(!showBackfill); initBackfillTime(); }} className="text-[10px] text-gray-500 border-b border-gray-800 pb-0.5">+ 补录历史</button>
+                                            <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="text-[10px] text-gray-500 border-b border-gray-800 pb-0.5">+ 补录历史</button>
                                         </div>
                                         {showBackfill && (
                                             <div className="mt-4 pt-4 border-t border-gray-800">
                                                 <div className="flex gap-2 mb-4">
                                                     {[15, 30, 60].map(m => (
-                                                        <button key={m} onClick={() => handleQuickTime(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px] hover:border-[#00ff41] hover:text-[#00ff41] transition-colors">{m >= 60 ? '1h' : m+'m'}前</button>
+                                                        <button key={m} onClick={() => handleQuickTime(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px] hover:border-[#00ff41] hover:text-[#00ff41]">{m >= 60 ? '1h' : m+'m'}前</button>
                                                     ))}
                                                 </div>
                                                 <div className="space-y-2 mb-4 text-[10px]">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-gray-500 w-8">开始</span>
-                                                        <input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1 py-1" />
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-gray-500 w-8">结束</span>
-                                                        <input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1 py-1" />
-                                                    </div>
+                                                    <div className="flex items-center gap-2"><span className="text-gray-500 w-8">开始</span><input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1 py-1" /></div>
+                                                    <div className="flex items-center gap-2"><span className="text-gray-500 w-8">结束</span><input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1 py-1" /></div>
                                                 </div>
                                                 <button onClick={confirmBackfill} className="w-full py-2 bg-gray-800 text-[#00ff41] rounded text-[10px] font-bold border border-[#00ff41]/30">确认补录</button>
                                             </div>
                                         )}
                                     </div>
                                 ) : (
-                                    <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止并同步</button>
+                                    <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止记录并同步</button>
                                 )}
                             </div>
                         </div>
                     )}
+
+                    <div className="flex justify-between items-center mb-4 px-1">
+                        <h2 className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">历史记录</h2>
+                        <button onClick={exportData} className="text-[10px] text-[#00ff41] border border-[#00ff41]/30 px-2 py-0.5 rounded hover:bg-[#00ff41]/10">导出文本 (CST)</button>
+                    </div>
 
                     <div className="space-y-3">
                         {sortedLogs.filter(l => !l.deleted).map(log => (
@@ -310,13 +338,10 @@
                                             <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent" />
                                             <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent" />
                                         </div>
-                                        <input type="text" value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs" placeholder="写点什么..." />
+                                        <input type="text" value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs" />
                                         <div className="flex justify-between items-center">
                                             <button onClick={() => deleteLog(log.id)} className="text-[10px] text-red-500">删除</button>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button>
-                                                <button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存修改</button>
-                                            </div>
+                                            <div className="flex gap-2"><button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button><button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存修改</button></div>
                                         </div>
                                     </div>
                                 ) : (
@@ -324,9 +349,7 @@
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-[9px] font-bold px-1 rounded" style={{backgroundColor: CATEGORIES[log.category]?.color + '22', color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
-                                                <span className="text-[9px] text-gray-600 font-bold">
-                                                    {log.category === 'IDEA' ? formatDateTime(log.startTime) : `${formatDateTime(log.startTime)} - ${formatTimeOnly(log.endTime)}`}
-                                                </span>
+                                                <span className="text-[9px] text-gray-600 font-bold">{log.category === 'IDEA' ? formatDateTime(log.startTime) : `${formatDateTime(log.startTime)} - ${formatTimeOnly(log.endTime)}`}</span>
                                             </div>
                                             <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{log.feeling}</div>
                                         </div>
