@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.4.4</title>
+    <title>时间炼金术 v1.5.0</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -13,12 +13,10 @@
         body { font-family: 'JetBrains+Mono', monospace; background-color: #0a0a0a; color: #00ff41; min-height: 100vh; }
         .glass { background: rgba(20, 20, 20, 0.8); backdrop-filter: blur(10px); border: 1px solid #333; }
         input, select, textarea { background: #1a1a1a !important; color: #00ff41 !important; border: 1px solid #444 !important; border-radius: 4px; padding: 6px 10px; outline: none; }
-        .btn-action { padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; }
-        .save-btn { background: #00ff41; color: #000; }
+        .save-btn { background: #00ff41; color: #000; font-weight: bold; }
         .edit-btn { color: #666; border: 1px solid #333; font-size: 10px; padding: 2px 8px; border-radius: 4px; }
         .idea-card { border: 1px dashed #eab308; background: rgba(234, 179, 8, 0.05); }
         input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
-        /* 关键：自动伸缩高度 */
         .auto-resize-textarea { field-sizing: content; min-height: 1.5rem; resize: none; border: none !important; background: transparent !important; }
     </style>
 </head>
@@ -26,7 +24,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
 
         const CATEGORIES = {
             CORE: { id: 'CORE', label: '交易研究', color: '#00ff41' },
@@ -38,27 +36,17 @@
             IDEA: { id: 'IDEA', label: '即时想法', color: '#eab308' }
         };
 
+        // P1: 生成唯一ID，防止高频点击碰撞
+        const generateId = () => {
+            return typeof crypto.randomUUID === 'function' 
+                ? crypto.randomUUID() 
+                : Date.now().toString(36) + Math.random().toString(36).substring(2);
+        };
+
         const App = () => {
-            const [logs, setLogs] = useState(() => {
-                try {
-                    const saved = localStorage.getItem('timeLogs');
-                    return saved ? JSON.parse(saved) : [];
-                } catch (e) { return []; }
-            });
-
-            const [activeTask, setActiveTask] = useState(() => {
-                try {
-                    const saved = localStorage.getItem('activeTask');
-                    return saved && saved !== "null" ? JSON.parse(saved) : null;
-                } catch (e) { return null; }
-            });
-
-            const [config, setConfig] = useState(() => {
-                try {
-                    const saved = localStorage.getItem('syncConfig');
-                    return saved ? JSON.parse(saved) : {token:"", gistId:""};
-                } catch (e) { return {token:"", gistId:""}; }
-            });
+            const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('timeLogs') || '[]'));
+            const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
+            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || '{"token":"","gistId":""}'));
             
             const [showSettings, setShowSettings] = useState(false);
             const [syncing, setSyncing] = useState(false);
@@ -70,108 +58,72 @@
             const [showBackfill, setShowBackfill] = useState(false);
             const [backfillData, setBackfillData] = useState({ start: "", end: "" });
 
-            useEffect(() => {
-                localStorage.setItem('timeLogs', JSON.stringify(logs));
-                localStorage.setItem('activeTask', JSON.stringify(activeTask));
-                localStorage.setItem('syncConfig', JSON.stringify(config));
-            }, [logs, activeTask, config]);
+            // P2: 职责拆分，优化写入性能
+            useEffect(() => { localStorage.setItem('timeLogs', JSON.stringify(logs)); }, [logs]);
+            useEffect(() => { localStorage.setItem('activeTask', JSON.stringify(activeTask)); }, [activeTask]);
+            useEffect(() => { localStorage.setItem('syncConfig', JSON.stringify(config)); }, [config]);
 
-            const sortedLogs = useMemo(() => {
-                return [...logs].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+            // P2: 合并 filter 与 sort 进 useMemo，减少重绘计算
+            const displayLogs = useMemo(() => {
+                return logs.filter(l => !l.deleted).sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
             }, [logs]);
 
+            // P1: 修正时区逻辑注释：getTimezoneOffset() 在 UTC+8 返回 -480
             const toLocalISO = (isoString) => {
                 if (!isoString) return "";
-                const date = new Date(isoString);
-                const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
-                return localDate.toISOString().slice(0, 16);
+                const d = new Date(isoString);
+                return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
             };
 
             const formatTimeOnly = (isoString) => {
-                if(!isoString) return "--:--";
                 const date = new Date(isoString);
                 return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
             };
 
             const formatDateTime = (isoString) => {
-                if(!isoString) return "--/-- --:--";
                 const date = new Date(isoString);
                 return `${date.getMonth()+1}/${date.getDate()} ${formatTimeOnly(isoString)}`;
             };
 
-            const handleQuickTime = (minutes) => {
-                const now = new Date();
-                const start = new Date(now.getTime() - minutes * 60 * 1000);
-                setBackfillData({ 
-                    start: toLocalISO(start.toISOString()), 
-                    end: toLocalISO(now.toISOString()) 
-                });
-            };
-
-            const exportData = () => {
-                let lastDate = "";
-                const exportText = sortedLogs
-                    .filter(log => !log.deleted)
-                    .map(log => {
-                        const dateObj = new Date(log.startTime);
-                        const currentDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
-                        let datePrefix = "";
-                        if (currentDate !== lastDate) {
-                            datePrefix = `\n[--- ${currentDate} ---]\n`;
-                            lastDate = currentDate;
-                        }
-                        if (log.category === 'IDEA') {
-                            return `${datePrefix}${formatTimeOnly(log.startTime)} | ${log.feeling}`;
-                        } else {
-                            return `${datePrefix}${formatTimeOnly(log.startTime)} | ${formatTimeOnly(log.endTime)} | ${CATEGORIES[log.category]?.label} | ${log.feeling}`;
-                        }
-                    }).join('\n');
-                const textArea = document.createElement("textarea");
-                textArea.value = exportText.trim();
-                document.body.appendChild(textArea);
-                textArea.select();
-                try {
-                    document.execCommand('copy');
-                    alert("已按照时间倒序格式复制到剪贴板！");
-                } catch (err) { alert("复制失败"); }
-                document.body.removeChild(textArea);
-            };
-
-            const syncData = async (mode = 'sync', silent = false) => {
+            // P0: 核心重构：syncData 接收参数，解决竞态问题
+            const syncData = async (currentLogs, mode = 'sync', silent = false) => {
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
                 try {
-                    const timestamp = Date.now();
-                    const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${timestamp}`, {
-                        headers: { 'Authorization': `token ${config.token}`, 'Accept': 'application/vnd.github.v3+json' },
+                    const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${Date.now()}`, {
+                        headers: { 'Authorization': `token ${config.token}` },
                         cache: 'no-store'
                     });
+                    
                     let cloudContent = [];
                     if (response.ok) {
                         const gistData = await response.json();
-                        const fileContent = gistData.files['data.json']?.content;
-                        if (fileContent) cloudContent = JSON.parse(fileContent);
+                        const content = gistData.files['data.json']?.content;
+                        if (content) cloudContent = JSON.parse(content);
                     }
+
                     let finalLogs = [];
                     if (mode === 'pull') {
                         finalLogs = cloudContent;
                     } else {
+                        // 合并逻辑：以 updatedAt 为准
                         const uniqueMap = new Map();
-                        const localData = JSON.parse(localStorage.getItem('timeLogs') || '[]');
-                        [...cloudContent, ...localData].forEach(item => {
-                            if (!item || !item.id) return;
+                        [...cloudContent, ...currentLogs].forEach(item => {
+                            if (!item.id) return;
                             const existing = uniqueMap.get(item.id);
-                            const itemTime = item.updatedAt || item.id;
-                            const existingTime = existing ? (existing.updatedAt || existing.id) : 0;
-                            if (!existing || itemTime >= existingTime) uniqueMap.set(item.id, item);
+                            if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                                uniqueMap.set(item.id, item);
+                            }
                         });
                         finalLogs = Array.from(uniqueMap.values());
                     }
+
                     await fetch(`https://api.github.com/gists/${config.gistId}`, {
                         method: 'PATCH',
                         headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify({ files: { 'data.json': { content: JSON.stringify(finalLogs) } } })
                     });
+
                     setLogs(finalLogs);
                     if (!silent) alert("云端同步成功");
                 } catch (err) {
@@ -179,60 +131,84 @@
                 } finally { setSyncing(false); }
             };
 
-            const confirmBackfill = () => {
-                const s = new Date(backfillData.start);
-                const e = new Date(backfillData.end);
-                const duration = Math.max(1, Math.round((e - s) / 1000 / 60));
-                const newLog = { id: Date.now(), category: currentCategory, startTime: s.toISOString(), endTime: e.toISOString(), duration, feeling: feeling || "", updatedAt: Date.now() };
-                setLogs([newLog, ...logs]);
-                setFeeling(''); setShowBackfill(false);
-                setTimeout(() => syncData('sync', true), 500);
-            };
+            // P1: 升级现代 Clipboard API
+            const exportData = async () => {
+                let lastDate = "";
+                const exportText = displayLogs.map(log => {
+                    const dateObj = new Date(log.startTime);
+                    const currentDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
+                    let datePrefix = (currentDate !== lastDate) ? `\n[--- ${currentDate} ---]\n` : "";
+                    lastDate = currentDate;
 
-            const startTask = () => {
-                setActiveTask({ id: Date.now(), category: currentCategory, startTime: new Date().toISOString(), feeling, updatedAt: Date.now() });
-                setFeeling('');
+                    return log.category === 'IDEA' 
+                        ? `${datePrefix}${formatTimeOnly(log.startTime)} | ${log.feeling}`
+                        : `${datePrefix}${formatTimeOnly(log.startTime)} | ${formatTimeOnly(log.endTime)} | ${CATEGORIES[log.category]?.label} | ${log.feeling}`;
+                }).join('\n');
+
+                try {
+                    await navigator.clipboard.writeText(exportText.trim());
+                    alert("已按照时间倒序复制到剪贴板！");
+                } catch (err) {
+                    alert("复制失败，请手动选择复制。");
+                }
             };
 
             const stopTask = () => {
                 if (!activeTask) return;
                 const now = new Date();
-                const completedTask = { ...activeTask, category: currentCategory, feeling: feeling || activeTask.feeling || "", endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), updatedAt: Date.now() };
-                setLogs([completedTask, ...logs]);
-                setActiveTask(null); setFeeling('');
-                setTimeout(() => syncData('sync', true), 500);
+                const completedTask = { 
+                    ...activeTask, 
+                    category: currentCategory, 
+                    feeling: feeling || activeTask.feeling || "", 
+                    endTime: now.toISOString(), 
+                    duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), 
+                    updatedAt: Date.now() 
+                };
+                const newLogs = [completedTask, ...logs];
+                setLogs(newLogs);
+                setActiveTask(null);
+                setFeeling('');
+                syncData(newLogs, 'sync', true); // P0: 传参同步
             };
 
             const saveQuickIdea = () => {
                 if (!ideaText.trim()) return;
-                const newIdea = { id: Date.now(), category: 'IDEA', startTime: new Date().toISOString(), endTime: new Date().toISOString(), feeling: ideaText, duration: 0, updatedAt: Date.now() };
-                setLogs([newIdea, ...logs]);
+                const newLogs = [{ 
+                    id: generateId(), 
+                    category: 'IDEA', 
+                    startTime: new Date().toISOString(), 
+                    endTime: new Date().toISOString(), 
+                    feeling: ideaText, 
+                    duration: 0, 
+                    updatedAt: Date.now() 
+                }, ...logs];
+                setLogs(newLogs);
                 setIdeaText('');
-                setTimeout(() => syncData('sync', true), 500);
+                syncData(newLogs, 'sync', true);
             };
 
-            const saveEdit = () => {
-                const s = new Date(editDraft.startTime);
-                const e = new Date(editDraft.endTime);
-                const newDuration = Math.max(1, Math.round((e - s) / 1000 / 60));
-                const updatedDraft = { ...editDraft, feeling: editDraft.feeling || "", duration: editDraft.category === 'IDEA' ? 0 : newDuration, updatedAt: Date.now() };
-                setLogs(logs.map(l => l.id === editingId ? updatedDraft : l));
-                setEditingId(null);
-                setTimeout(() => syncData('sync', true), 500);
-            };
-
-            const deleteLog = (id) => {
-                if(window.confirm("确定删除吗？")) {
-                    setLogs(logs.map(l => l.id === id ? { ...l, deleted: true, updatedAt: Date.now() } : l));
-                    setEditingId(null);
-                    setTimeout(() => syncData('sync', true), 500);
-                }
+            const confirmBackfill = () => {
+                const s = new Date(backfillData.start);
+                const e = new Date(backfillData.end);
+                const newLogs = [{ 
+                    id: generateId(), 
+                    category: currentCategory, 
+                    startTime: s.toISOString(), 
+                    endTime: e.toISOString(), 
+                    duration: Math.max(1, Math.round((e - s) / 1000 / 60)), 
+                    feeling: feeling || "", 
+                    updatedAt: Date.now() 
+                }, ...logs];
+                setLogs(newLogs);
+                setFeeling(''); 
+                setShowBackfill(false);
+                syncData(newLogs, 'sync', true);
             };
 
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.4</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.5.0</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -245,8 +221,8 @@
                                 <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full" />
                                 <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full" />
                                 <div className="flex gap-2">
-                                    <button onClick={() => syncData('pull')} className="btn-action bg-gray-800 text-white flex-1">覆盖本地</button>
-                                    <button onClick={() => setShowSettings(false)} className="btn-action save-btn flex-1">完成</button>
+                                    <button onClick={() => syncData(logs, 'pull')} className="btn-action bg-gray-800 text-white flex-1 py-2 rounded">从云端覆盖</button>
+                                    <button onClick={() => setShowSettings(false)} className="save-btn flex-1 py-2 rounded">保存并关闭</button>
                                 </div>
                             </div>
                         </div>
@@ -254,20 +230,14 @@
 
                     {!editingId && (
                         <div className="space-y-4 mb-8">
-                            {/* 优化：自动换行的 TextArea */}
                             <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2">
                                 <textarea 
-                                    placeholder="💡 灵感想法..." 
+                                    placeholder="💡 记录瞬间的交易直觉..." 
                                     value={ideaText} 
                                     onChange={e => setIdeaText(e.target.value)} 
-                                    onKeyDown={e => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            saveQuickIdea();
-                                        }
-                                    }}
+                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveQuickIdea(); } }}
                                     rows="1"
-                                    className="auto-resize-textarea flex-1 text-xs py-1 leading-normal"
+                                    className="auto-resize-textarea flex-1 text-xs py-1"
                                 />
                                 <button onClick={saveQuickIdea} className="bg-[#eab308] text-black px-3 py-1.5 rounded text-xs font-bold shrink-0 mb-0.5">记下</button>
                             </div>
@@ -278,63 +248,51 @@
                                         <button key={cat.id} onClick={() => setCurrentCategory(cat.id)} className={`text-[10px] py-2 rounded border transition-all ${currentCategory === cat.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}>{cat.label}</button>
                                     ))}
                                 </div>
-                                <input 
-                                    type="text" 
-                                    placeholder={activeTask ? "正在计时：随时补充进展..." : "记录此刻内容..."} 
-                                    value={feeling} 
-                                    onChange={e => setFeeling(e.target.value)} 
-                                    className="w-full text-sm mb-4 bg-transparent border-b border-gray-800 pb-1" 
-                                />
-                                
+                                <input type="text" placeholder={activeTask ? "正在计时：写下当前进展..." : "要做什么内容..."} value={feeling} onChange={e => setFeeling(e.target.value)} className="w-full text-sm mb-4 bg-transparent border-b border-gray-800 pb-1" />
                                 {!activeTask ? (
                                     <div className="space-y-3">
-                                        <button onClick={startTask} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始记录</button>
-                                        <div className="flex justify-center">
-                                            <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="text-[10px] text-gray-500 border-b border-gray-800 pb-0.5">+ 补录历史</button>
+                                        <button onClick={() => { setActiveTask({ id: generateId(), category: currentCategory, startTime: new Date().toISOString(), feeling, updatedAt: Date.now() }); setFeeling(''); }} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始记录</button>
+                                        <div className="flex justify-center text-[10px] text-gray-500 gap-4">
+                                            <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="border-b border-gray-800">+ 补录历史</button>
                                         </div>
                                         {showBackfill && (
-                                            <div className="mt-4 pt-4 border-t border-gray-800">
+                                            <div className="mt-4 pt-4 border-t border-gray-800 animate-in fade-in duration-300">
                                                 <div className="flex gap-2 mb-4">
-                                                    {[15, 30, 60].map(m => (
-                                                        <button key={m} onClick={() => handleQuickTime(m)} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px] hover:border-[#00ff41] hover:text-[#00ff41]">{m >= 60 ? '1h' : m+'m'}前</button>
-                                                    ))}
+                                                    {[15, 30, 60].map(m => <button key={m} onClick={() => { const now=new Date(); setBackfillData({start:toLocalISO(new Date(now.getTime()-m*60000).toISOString()), end:toLocalISO(now.toISOString())}) }} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px]">{m}m前</button>)}
                                                 </div>
                                                 <div className="space-y-2 mb-4 text-[10px]">
-                                                    <div className="flex items-center gap-2"><span className="text-gray-500 w-8">开始</span><input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1 py-1" /></div>
-                                                    <div className="flex items-center gap-2"><span className="text-gray-500 w-8">结束</span><input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1 py-1" /></div>
+                                                    <div className="flex items-center gap-2"><span className="text-gray-500 w-8">开始</span><input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1" /></div>
+                                                    <div className="flex items-center gap-2"><span className="text-gray-500 w-8">结束</span><input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1" /></div>
                                                 </div>
                                                 <button onClick={confirmBackfill} className="w-full py-2 bg-gray-800 text-[#00ff41] rounded text-[10px] font-bold border border-[#00ff41]/30">确认补录</button>
                                             </div>
                                         )}
                                     </div>
-                                ) : (
-                                    <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止记录并同步</button>
-                                )}
+                                ) : <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止并同步云端</button>}
                             </div>
                         </div>
                     )}
 
                     <div className="flex justify-between items-center mb-4 px-1">
-                        <h2 className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">历史记录</h2>
-                        <button onClick={exportData} className="text-[10px] text-[#00ff41] border border-[#00ff41]/30 px-2 py-0.5 rounded hover:bg-[#00ff41]/10">导出文本 (CST)</button>
+                        <h2 className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">历史日志</h2>
+                        <button onClick={exportData} className="text-[10px] text-[#00ff41] border border-[#00ff41]/30 px-2 py-0.5 rounded">导出倒序文本</button>
                     </div>
 
                     <div className="space-y-3">
-                        {sortedLogs.filter(l => !l.deleted).map(log => (
-                            <div key={log.id} className={`glass p-4 rounded-xl ${log.category === 'IDEA' ? 'idea-card' : ''}`}>
+                        {displayLogs.map(log => (
+                            <div key={log.id} className={`glass p-4 rounded-xl transition-all hover:border-gray-600 ${log.category === 'IDEA' ? 'idea-card' : ''}`}>
                                 {editingId === log.id ? (
                                     <div className="space-y-4">
                                         <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs w-full">
                                             {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                                         </select>
-                                        <div className="space-y-2 bg-black/20 p-2 rounded border border-gray-800">
-                                            <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent" />
-                                            <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent" />
-                                        </div>
-                                        <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs auto-resize-textarea" style={{background: '#000 !important'}} />
-                                        <div className="flex justify-between items-center">
-                                            <button onClick={() => deleteLog(log.id)} className="text-[10px] text-red-500">删除</button>
-                                            <div className="flex gap-2"><button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button><button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存修改</button></div>
+                                        <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px]" />
+                                        <div className="flex justify-between">
+                                            <button onClick={() => { if(confirm("删除此记录？")){ const newLogs=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(newLogs); setEditingId(null); syncData(newLogs,'sync',true); } }} className="text-[10px] text-red-500">删除</button>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button>
+                                                <button onClick={() => { const newLogs=logs.map(l=>l.id===editingId?{...editDraft, updatedAt:Date.now()}:l); setLogs(newLogs); setEditingId(null); syncData(newLogs,'sync',true); }} className="text-[10px] text-[#00ff41] border border-[#00ff41] px-3 py-1 rounded">更新</button>
+                                            </div>
                                         </div>
                                     </div>
                                 ) : (
@@ -342,11 +300,11 @@
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-[9px] font-bold px-1 rounded" style={{backgroundColor: CATEGORIES[log.category]?.color + '22', color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
-                                                <span className="text-[9px] text-gray-600 font-bold">{log.category === 'IDEA' ? formatDateTime(log.startTime) : `${formatDateTime(log.startTime)} - ${formatTimeOnly(log.endTime)}`}</span>
+                                                <span className="text-[9px] text-gray-600">{log.category === 'IDEA' ? formatDateTime(log.startTime) : `${formatDateTime(log.startTime)} - ${formatTimeOnly(log.endTime)}`}</span>
                                             </div>
                                             <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{log.feeling}</div>
                                         </div>
-                                        <div className="flex flex-col items-end gap-2 ml-4">
+                                        <div className="flex flex-col items-end gap-2 ml-4 shrink-0">
                                             {log.category !== 'IDEA' && <div className="text-sm font-bold text-[#00ff41]">{log.duration}m</div>}
                                             <button onClick={() => { setEditingId(log.id); setEditDraft({...log}); }} className="edit-btn">编辑</button>
                                         </div>
@@ -358,8 +316,7 @@
                 </div>
             );
         };
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
 </html>
