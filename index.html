@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.4.3</title>
+    <title>时间炼金术 v1.4.4</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -12,12 +12,14 @@
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
         body { font-family: 'JetBrains+Mono', monospace; background-color: #0a0a0a; color: #00ff41; min-height: 100vh; }
         .glass { background: rgba(20, 20, 20, 0.8); backdrop-filter: blur(10px); border: 1px solid #333; }
-        input, select { background: #1a1a1a !important; color: #00ff41 !important; border: 1px solid #444 !important; border-radius: 4px; padding: 6px 10px; outline: none; }
+        input, select, textarea { background: #1a1a1a !important; color: #00ff41 !important; border: 1px solid #444 !important; border-radius: 4px; padding: 6px 10px; outline: none; }
         .btn-action { padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; }
         .save-btn { background: #00ff41; color: #000; }
         .edit-btn { color: #666; border: 1px solid #333; font-size: 10px; padding: 2px 8px; border-radius: 4px; }
         .idea-card { border: 1px dashed #eab308; background: rgba(234, 179, 8, 0.05); }
         input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        /* 关键：自动伸缩高度 */
+        .auto-resize-textarea { field-sizing: content; min-height: 1.5rem; resize: none; border: none !important; background: transparent !important; }
     </style>
 </head>
 <body>
@@ -114,19 +116,16 @@
                         const dateObj = new Date(log.startTime);
                         const currentDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
                         let datePrefix = "";
-                        
                         if (currentDate !== lastDate) {
                             datePrefix = `\n[--- ${currentDate} ---]\n`;
                             lastDate = currentDate;
                         }
-
                         if (log.category === 'IDEA') {
                             return `${datePrefix}${formatTimeOnly(log.startTime)} | ${log.feeling}`;
                         } else {
                             return `${datePrefix}${formatTimeOnly(log.startTime)} | ${formatTimeOnly(log.endTime)} | ${CATEGORIES[log.category]?.label} | ${log.feeling}`;
                         }
                     }).join('\n');
-
                 const textArea = document.createElement("textarea");
                 textArea.value = exportText.trim();
                 document.body.appendChild(textArea);
@@ -134,9 +133,7 @@
                 try {
                     document.execCommand('copy');
                     alert("已按照时间倒序格式复制到剪贴板！");
-                } catch (err) {
-                    alert("复制失败，请尝试手动复制。");
-                }
+                } catch (err) { alert("复制失败"); }
                 document.body.removeChild(textArea);
             };
 
@@ -186,18 +183,9 @@
                 const s = new Date(backfillData.start);
                 const e = new Date(backfillData.end);
                 const duration = Math.max(1, Math.round((e - s) / 1000 / 60));
-                const newLog = { 
-                    id: Date.now(), 
-                    category: currentCategory, 
-                    startTime: s.toISOString(), 
-                    endTime: e.toISOString(), 
-                    duration, 
-                    feeling: feeling || "", 
-                    updatedAt: Date.now() 
-                };
+                const newLog = { id: Date.now(), category: currentCategory, startTime: s.toISOString(), endTime: e.toISOString(), duration, feeling: feeling || "", updatedAt: Date.now() };
                 setLogs([newLog, ...logs]);
-                setFeeling(''); 
-                setShowBackfill(false);
+                setFeeling(''); setShowBackfill(false);
                 setTimeout(() => syncData('sync', true), 500);
             };
 
@@ -209,17 +197,9 @@
             const stopTask = () => {
                 if (!activeTask) return;
                 const now = new Date();
-                const completedTask = { 
-                    ...activeTask, 
-                    category: currentCategory, // 修复：捕获停止时的最新分类
-                    feeling: feeling || activeTask.feeling || "", 
-                    endTime: now.toISOString(), 
-                    duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), 
-                    updatedAt: Date.now() 
-                };
+                const completedTask = { ...activeTask, category: currentCategory, feeling: feeling || activeTask.feeling || "", endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 1000 / 60)), updatedAt: Date.now() };
                 setLogs([completedTask, ...logs]);
-                setActiveTask(null);
-                setFeeling(''); 
+                setActiveTask(null); setFeeling('');
                 setTimeout(() => syncData('sync', true), 500);
             };
 
@@ -252,7 +232,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.3</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.4.4</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
                             <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
@@ -274,9 +254,22 @@
 
                     {!editingId && (
                         <div className="space-y-4 mb-8">
-                            <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex gap-2">
-                                <input type="text" placeholder="💡 灵感想法..." value={ideaText} onChange={e => setIdeaText(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveQuickIdea()} className="flex-1 text-xs" />
-                                <button onClick={saveQuickIdea} className="bg-[#eab308] text-black px-3 py-1 rounded text-xs font-bold">记下</button>
+                            {/* 优化：自动换行的 TextArea */}
+                            <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2">
+                                <textarea 
+                                    placeholder="💡 灵感想法..." 
+                                    value={ideaText} 
+                                    onChange={e => setIdeaText(e.target.value)} 
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            saveQuickIdea();
+                                        }
+                                    }}
+                                    rows="1"
+                                    className="auto-resize-textarea flex-1 text-xs py-1 leading-normal"
+                                />
+                                <button onClick={saveQuickIdea} className="bg-[#eab308] text-black px-3 py-1.5 rounded text-xs font-bold shrink-0 mb-0.5">记下</button>
                             </div>
 
                             <div className="glass p-5 rounded-xl border-[#00ff41]/20">
@@ -338,7 +331,7 @@
                                             <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent" />
                                             <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent" />
                                         </div>
-                                        <input type="text" value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs" />
+                                        <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs auto-resize-textarea" style={{background: '#000 !important'}} />
                                         <div className="flex justify-between items-center">
                                             <button onClick={() => deleteLog(log.id)} className="text-[10px] text-red-500">删除</button>
                                             <div className="flex gap-2"><button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button><button onClick={saveEdit} className="text-[10px] text-[#00ff41] font-bold border border-[#00ff41] px-3 py-1 rounded">保存修改</button></div>
