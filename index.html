@@ -232,7 +232,7 @@
                         <div className="space-y-4 mb-8">
                             <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2">
                                 <textarea 
-                                    placeholder="💡 记录瞬间的交易直觉..." 
+                                    placeholder="💡 记录瞬间的想法..." 
                                     value={ideaText} 
                                     onChange={e => setIdeaText(e.target.value)} 
                                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveQuickIdea(); } }}
