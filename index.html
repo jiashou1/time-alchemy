@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.6.1</title>
+    <title>时间炼金术 v1.7.0</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -21,6 +21,16 @@
         .highlight-tag { font-size: 9px; padding: 1px 6px; border-radius: 99px; background: rgba(0, 255, 65, 0.15); color: #00ff41; border: 1px solid rgba(0, 255, 65, 0.3); margin-right: 4px; }
         .auto-resize-textarea { field-sizing: content; min-height: 1.5rem; resize: none; border: none !important; background: transparent !important; }
         input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        .tab-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #0a0a0a; border-top: 1px solid #222; z-index: 50; }
+        .md h1,.md h2,.md h3 { color: #00ff41; font-weight: bold; margin: 12px 0 6px; }
+        .md h1 { font-size: 14px; } .md h2 { font-size: 13px; } .md h3 { font-size: 12px; }
+        .md p { margin: 6px 0; font-size: 11px; color: #ccc; line-height: 1.6; }
+        .md ul,.md ol { margin: 6px 0 6px 16px; font-size: 11px; color: #ccc; }
+        .md li { margin: 3px 0; line-height: 1.5; }
+        .md strong { color: #00ff41; font-weight: bold; }
+        .md em { color: #eab308; }
+        .md hr { border-color: #333; margin: 12px 0; }
+        .md code { background: #1a1a1a; color: #0ea5e9; padding: 1px 4px; border-radius: 3px; font-size: 10px; }
     </style>
 </head>
 <body>
@@ -46,7 +56,7 @@
         const App = () => {
             const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('timeLogs') || '[]'));
             const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
-            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || `{"token":"","gistId":"","tagMap":"${DEFAULT_TAGS}"}`));
+            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || `{"token":"","gistId":"","tagMap":"${DEFAULT_TAGS}","apiKey":"","modelName":"gemini-2.0-flash"}`));
             const [syncing, setSyncing] = useState(false);
             const [feeling, setFeeling] = useState('');
             const [ideaText, setIdeaText] = useState('');
@@ -59,6 +69,11 @@
             const [showBackfill, setShowBackfill] = useState(false);
             const [backfillData, setBackfillData] = useState({ start: "", end: "" });
             const [tempConfig, setTempConfig] = useState(null);
+            const [activeTab, setActiveTab] = useState('log');
+            const [reviewPeriod, setReviewPeriod] = useState('today');
+            const [reviewMessages, setReviewMessages] = useState([]);
+            const [reviewLoading, setReviewLoading] = useState(false);
+            const [reviewInput, setReviewInput] = useState('');
 
             useEffect(() => { localStorage.setItem('timeLogs', JSON.stringify(logs)); }, [logs]);
             useEffect(() => { localStorage.setItem('activeTask', JSON.stringify(activeTask)); }, [activeTask]);
@@ -159,10 +174,144 @@
                 return <div className="text-xs text-gray-300 break-words whitespace-pre-wrap">{text}</div>;
             };
 
+            // 简易 Markdown 渲染
+            const renderMarkdown = (text) => {
+                if (!text) return null;
+                const lines = text.split('\n');
+                const elements = [];
+                let i = 0;
+                while (i < lines.length) {
+                    const line = lines[i];
+                    if (line.startsWith('### ')) { elements.push(<h3 key={i}>{line.slice(4)}</h3>); }
+                    else if (line.startsWith('## ')) { elements.push(<h2 key={i}>{line.slice(3)}</h2>); }
+                    else if (line.startsWith('# ')) { elements.push(<h1 key={i}>{line.slice(2)}</h1>); }
+                    else if (line.startsWith('---')) { elements.push(<hr key={i} />); }
+                    else if (line.startsWith('- ') || line.startsWith('* ')) {
+                        const items = [];
+                        while (i < lines.length && (lines[i].startsWith('- ') || lines[i].startsWith('* '))) {
+                            items.push(<li key={i} dangerouslySetInnerHTML={{__html: lines[i].slice(2).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>')}} />);
+                            i++;
+                        }
+                        elements.push(<ul key={`ul-${i}`}>{items}</ul>);
+                        continue;
+                    }
+                    else if (/^\d+\. /.test(line)) {
+                        const items = [];
+                        while (i < lines.length && /^\d+\. /.test(lines[i])) {
+                            items.push(<li key={i} dangerouslySetInnerHTML={{__html: lines[i].replace(/^\d+\. /,'').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>')}} />);
+                            i++;
+                        }
+                        elements.push(<ol key={`ol-${i}`}>{items}</ol>);
+                        continue;
+                    }
+                    else if (line.trim() !== '') {
+                        elements.push(<p key={i} dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>').replace(/`(.+?)`/g,'<code>$1</code>')}} />);
+                    }
+                    i++;
+                }
+                return <div className="md">{elements}</div>;
+            };
+
+            // 构建复盘数据
+            const buildReviewData = (period) => {
+                const now = new Date();
+                const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+                const cutoff = period === 'today'
+                    ? startOf(now)
+                    : new Date(startOf(now).getTime() - 6 * 86400000);
+                const periodLogs = logs.filter(l => !l.deleted && l.category !== 'IDEA' && new Date(l.startTime) >= cutoff);
+                if (periodLogs.length === 0) return null;
+                // 分类汇总
+                const summary = {};
+                periodLogs.forEach(l => {
+                    if (!summary[l.category]) summary[l.category] = 0;
+                    summary[l.category] += (l.duration || 0);
+                });
+                const summaryText = Object.entries(summary)
+                    .map(([k, v]) => `${CATEGORIES[k]?.label || k}：${v}分钟`)
+                    .join('，');
+                // 原始记录
+                const recordsText = periodLogs
+                    .sort((a,b) => new Date(a.startTime) - new Date(b.startTime))
+                    .map(l => {
+                        const tags = l.feeling?.match(/^\[@(.+?)\]/)?.[1] || '';
+                        const note = l.feeling?.replace(/^\[@.+?\]\s*/, '') || '';
+                        return `${formatDT(l.startTime)}-${formatTime(l.endTime)} [${CATEGORIES[l.category]?.label}]${tags ? ' #'+tags.replace(/\//g,'#') : ''} ${l.duration}分钟${note ? ' | '+note : ''}`;
+                    }).join('\n');
+                return { summaryText, recordsText, periodLogs, summary };
+            };
+
+            // 调用 Gemini API
+            const callGemini = async (messages) => {
+                const apiKey = config.apiKey;
+                const model = config.modelName || 'gemini-2.0-flash';
+                if (!apiKey) throw new Error('请先在设置中填写 Gemini API Key');
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: messages })
+                });
+                if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || '请求失败'); }
+                const data = await res.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || '无返回内容';
+            };
+
+            // 发起复盘分析
+            const startReview = async () => {
+                const data = buildReviewData(reviewPeriod);
+                if (!data) { alert('该时间段暂无记录'); return; }
+                const periodLabel = reviewPeriod === 'today' ? '今日' : '本周';
+                const systemPrompt = `你是用户的时间管理顾问，请基于以下时间记录数据进行分析，用中文回答。
+
+分析周期：${periodLabel}
+分类时长汇总：${data.summaryText}
+
+原始记录：
+${data.recordsText}
+
+请按以下格式输出：
+
+## 核心结论
+（3-5条，每条一句话，直击关键问题，用 - 列出）
+
+---
+
+## 完整复盘
+（按分类展开分析，结合备注内容判断时间质量，给出具体可执行的改进建议）`;
+                const initMessages = [{ role: 'user', parts: [{ text: systemPrompt }] }];
+                setReviewMessages([{ role: 'user', text: `📊 ${periodLabel}复盘分析`, isSystem: true }]);
+                setReviewLoading(true);
+                try {
+                    const reply = await callGemini(initMessages);
+                    setReviewMessages([
+                        { role: 'user', text: `📊 ${periodLabel}复盘分析`, isSystem: true },
+                        { role: 'model', text: reply, _history: initMessages }
+                    ]);
+                } catch(e) { alert('分析失败：' + e.message); setReviewMessages([]); }
+                finally { setReviewLoading(false); }
+            };
+
+            // 追问
+            const sendFollowUp = async () => {
+                if (!reviewInput.trim() || reviewLoading) return;
+                const lastModel = [...reviewMessages].reverse().find(m => m.role === 'model');
+                if (!lastModel) return;
+                const history = [...lastModel._history, { role: 'model', parts: [{ text: lastModel.text }] }, { role: 'user', parts: [{ text: reviewInput }] }];
+                const userText = reviewInput;
+                setReviewInput('');
+                setReviewMessages(prev => [...prev, { role: 'user', text: userText }]);
+                setReviewLoading(true);
+                try {
+                    const reply = await callGemini(history);
+                    setReviewMessages(prev => [...prev, { role: 'model', text: reply, _history: history }]);
+                } catch(e) { alert('请求失败：' + e.message); }
+                finally { setReviewLoading(false); }
+            };
+
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.6.1</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.0</h1>
                         <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
@@ -178,6 +327,11 @@
                                     className="w-full h-32 text-[10px] p-2 bg-black leading-relaxed" 
                                 />
                             </div>
+                            <div className="border-t border-gray-800 pt-4 space-y-3">
+                                <label className="text-gray-500 block">AI 复盘设置</label>
+                                <input type="password" value={tempConfig.apiKey||''} onChange={e => setTempConfig({...tempConfig, apiKey: e.target.value})} placeholder="Gemini API Key" className="w-full" />
+                                <input type="text" value={tempConfig.modelName||'gemini-2.0-flash'} onChange={e => setTempConfig({...tempConfig, modelName: e.target.value})} placeholder="模型名称 (默认 gemini-2.0-flash)" className="w-full" />
+                            </div>
                             <div className="flex gap-2">
                                 <button onClick={() => syncData(logs, 'pull')} className="bg-gray-800 text-white flex-1 py-2 rounded">从云端覆盖</button>
                                 <button onClick={() => { setConfig({...tempConfig}); setShowSettings(false); }} className="save-btn flex-1 py-2 rounded text-black font-bold">保存生效</button>
@@ -185,6 +339,12 @@
                         </div>
                     )}
 
+                    <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2 mb-6">
+                        <textarea placeholder="💡 瞬时灵感..." value={ideaText} onChange={e => setIdeaText(e.target.value)} className="auto-resize-textarea flex-1 text-xs py-1" />
+                        <button onClick={() => { if(!ideaText.trim())return; const n=[{id:generateId(),category:'IDEA',startTime:new Date().toISOString(),endTime:new Date().toISOString(),feeling:ideaText,updatedAt:Date.now()},...logs]; setLogs(n); setIdeaText(''); syncData(n); }} className="bg-[#eab308] text-black px-3 py-1.5 rounded text-xs font-bold">记下</button>
+                    </div>
+
+                    {activeTab === 'log' && (<>
                     <div className="mb-6">
                         <div className="grid grid-cols-3 gap-2">
                             {Object.values(CATEGORIES).filter(c=>c.id!=='IDEA').map(c => (
@@ -225,10 +385,6 @@
                         </div>
                     ) : (
                         <div className="space-y-4 mb-8">
-                            <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2">
-                                <textarea placeholder="💡 瞬时灵感..." value={ideaText} onChange={e => setIdeaText(e.target.value)} className="auto-resize-textarea flex-1 text-xs py-1" />
-                                <button onClick={() => { if(!ideaText.trim())return; const n=[{id:generateId(),category:'IDEA',startTime:new Date().toISOString(),endTime:new Date().toISOString(),feeling:ideaText,updatedAt:Date.now()},...logs]; setLogs(n); setIdeaText(''); syncData(n); }} className="bg-[#eab308] text-black px-3 py-1.5 rounded text-xs font-bold">记下</button>
-                            </div>
                             <div className="glass p-5 rounded-xl">
                                 <button onClick={() => setActiveTask({ id: generateId(), category: currentCategory, startTime: new Date().toISOString(), updatedAt: Date.now() })} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm transition-transform active:scale-95">开始记录</button>
                                 <div className="flex justify-center text-[10px] text-gray-500 mt-4">
@@ -318,8 +474,89 @@
                             </div>
                         ))}
                     </div>
-                </div>
-            );
+                    </>)}
+
+                    {activeTab === 'review' && (
+                        <div className="space-y-4">
+                            {/* 周期切换 */}
+                            <div className="flex gap-2">
+                                {[{id:'today',label:'今日复盘'},{id:'week',label:'本周复盘'}].map(p => (
+                                    <button key={p.id} onClick={() => { setReviewPeriod(p.id); setReviewMessages([]); }} className={`flex-1 py-2 rounded text-[11px] border transition-all ${reviewPeriod===p.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}>{p.label}</button>
+                                ))}
+                            </div>
+
+                            {/* 数据摘要 */}
+                            {(() => {
+                                const data = buildReviewData(reviewPeriod);
+                                if (!data) return <div className="text-center text-gray-600 text-xs py-4">该时间段暂无记录</div>;
+                                return (
+                                    <div className="glass p-4 rounded-xl">
+                                        <div className="text-[10px] text-gray-500 mb-3">数据摘要</div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {Object.entries(data.summary).map(([k,v]) => (
+                                                <div key={k} className="flex items-center justify-between px-3 py-2 rounded" style={{background: CATEGORIES[k]?.color+'11', border:`1px solid ${CATEGORIES[k]?.color}33`}}>
+                                                    <span className="text-[10px]" style={{color: CATEGORIES[k]?.color}}>{CATEGORIES[k]?.label}</span>
+                                                    <span className="text-[11px] font-bold text-white">{v}m</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* 发起分析按钮 */}
+                            {reviewMessages.length === 0 && (
+                                <button onClick={startReview} disabled={reviewLoading} className="w-full py-3 bg-[#00ff41] text-black font-bold rounded text-sm disabled:opacity-50">
+                                    {reviewLoading ? '分析中...' : '🤖 开始 AI 复盘分析'}
+                                </button>
+                            )}
+
+                            {/* 对话区 */}
+                            {reviewMessages.length > 0 && (
+                                <div className="space-y-4">
+                                    {reviewMessages.map((msg, idx) => (
+                                        <div key={idx} className={`rounded-xl p-4 ${msg.role === 'user' ? 'glass border-gray-800' : 'glass border-[#00ff41]/20'}`}>
+                                            {msg.role === 'user'
+                                                ? <div className="text-[11px] text-gray-400">{msg.text}</div>
+                                                : renderMarkdown(msg.text)
+                                            }
+                                        </div>
+                                    ))}
+                                    {reviewLoading && <div className="text-center text-[11px] text-gray-500 animate-pulse py-4">AI 分析中...</div>}
+
+                                    {/* 重新分析 + 追问 */}
+                                    {!reviewLoading && (
+                                        <div className="space-y-3">
+                                            <div className="flex gap-2 items-end">
+                                                <textarea
+                                                    placeholder="继续追问..."
+                                                    value={reviewInput}
+                                                    onChange={e => setReviewInput(e.target.value)}
+                                                    onKeyDown={e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendFollowUp(); }}}
+                                                    rows="1"
+                                                    className="auto-resize-textarea flex-1 text-xs border-b border-gray-700 py-2"
+                                                />
+                                                <button onClick={sendFollowUp} disabled={!reviewInput.trim()} className="px-4 py-2 bg-[#00ff41] text-black text-xs font-bold rounded disabled:opacity-30">发送</button>
+                                            </div>
+                                            <button onClick={() => { setReviewMessages([]); }} className="w-full py-2 border border-gray-800 text-gray-500 rounded text-[10px]">重新分析</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* 底部 Tab 栏 */}
+                    <div className="tab-bar">
+                        <div className="max-w-md mx-auto flex">
+                            {[{id:'log',icon:'⏱',label:'记录'},{id:'review',icon:'🤖',label:'复盘'}].map(t => (
+                                <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex-1 py-3 flex flex-col items-center gap-0.5 transition-all ${activeTab===t.id ? 'text-[#00ff41]' : 'text-gray-600'}`}>
+                                    <span className="text-base">{t.icon}</span>
+                                    <span className="text-[9px]">{t.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
         };
         ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
