@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.5.3</title>
+    <title>时间炼金术 v1.5.4</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -16,8 +16,9 @@
         .save-btn { background: #00ff41; color: #000; font-weight: bold; }
         .edit-btn { color: #666; border: 1px solid #333; font-size: 10px; padding: 2px 8px; border-radius: 4px; }
         .idea-card { border: 1px dashed #eab308; background: rgba(234, 179, 8, 0.05); }
-        .member-tag { font-size: 9px; padding: 1px 6px; border-radius: 99px; background: rgba(236, 72, 153, 0.2); color: #ec4899; border: 1px solid rgba(236, 72, 153, 0.3); margin-right: 4px; }
-        input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        .q-tag { font-size: 9px; padding: 1px 8px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.1); transition: all 0.2s; }
+        .active-tag { background: #00ff4122; color: #00ff41; border-color: #00ff4155; }
+        .highlight-tag { font-size: 9px; padding: 1px 6px; border-radius: 99px; background: rgba(0, 255, 65, 0.15); color: #00ff41; border: 1px solid rgba(0, 255, 65, 0.3); margin-right: 4px; }
         .auto-resize-textarea { field-sizing: content; min-height: 1.5rem; resize: none; border: none !important; background: transparent !important; }
     </style>
 </head>
@@ -33,28 +34,26 @@
             FAMILY: { id: 'FAMILY', label: '家庭时光', color: '#ec4899' },
             RECREATION: { id: 'RECREATION', label: '休闲娱乐', color: '#8b5cf6' },
             WASTE: { id: 'WASTE', label: '无效损耗', color: '#ef4444' },
-            RECHARGE: { id: 'RECHARGE', label: '能量充电', color: '#eab308' },
+            RECHARGE: { id: 'RECHARGE', label: '日常代谢', color: '#eab308' },
             IDEA: { id: 'IDEA', label: '即时想法', color: '#eab308' }
         };
 
-        const generateId = () => typeof crypto.randomUUID === 'function' 
-            ? crypto.randomUUID() 
-            : Date.now().toString(36) + Math.random().toString(36).substring(2);
+        const DEFAULT_TAGS = "交易研究:复盘,盯盘,开仓;AI探索:提示词,测试,阅读;家庭时光:配偶,孩子,父母;日常代谢:睡觉,饮食,洗漱,如厕";
+
+        const generateId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString(36);
 
         const App = () => {
             const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('timeLogs') || '[]'));
             const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
-            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || '{"token":"","gistId":"","members":"配偶,孩子,父母,宠物"}'));
+            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || `{"token":"","gistId":"","tagMap":"${DEFAULT_TAGS}"}`));
             const [syncing, setSyncing] = useState(false);
             const [feeling, setFeeling] = useState('');
             const [ideaText, setIdeaText] = useState('');
             const [currentCategory, setCurrentCategory] = useState('CORE');
-            const [selectedMembers, setSelectedMembers] = useState([]);
+            const [selectedQuickTags, setSelectedQuickTags] = useState([]);
             const [editingId, setEditingId] = useState(null);
             const [editDraft, setEditDraft] = useState(null);
             const [showSettings, setShowSettings] = useState(false);
-            const [showBackfill, setShowBackfill] = useState(false);
-            const [backfillData, setBackfillData] = useState({ start: "", end: "" });
 
             useEffect(() => { localStorage.setItem('timeLogs', JSON.stringify(logs)); }, [logs]);
             useEffect(() => { localStorage.setItem('activeTask', JSON.stringify(activeTask)); }, [activeTask]);
@@ -62,202 +61,132 @@
 
             const displayLogs = useMemo(() => logs.filter(l => !l.deleted).sort((a, b) => new Date(b.startTime) - new Date(a.startTime)), [logs]);
 
-            const memberList = useMemo(() => config.members ? config.members.split(',').map(m => m.trim()) : [], [config.members]);
+            // 解析当前分类的快捷子项
+            const currentSubTags = useMemo(() => {
+                const label = CATEGORIES[currentCategory]?.label;
+                if (!config.tagMap || !label) return [];
+                const parts = config.tagMap.split(';');
+                const target = parts.find(p => p.trim().startsWith(label));
+                return target ? target.split(':')[1].split(',').map(t => t.trim()) : [];
+            }, [currentCategory, config.tagMap]);
 
-            const toLocalISO = (isoString) => {
-                if (!isoString) return "";
-                const d = new Date(isoString);
-                return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-            };
+            const toLocalISO = (iso) => iso ? new Date(new Date(iso).getTime() - new Date(iso).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
+            const formatTime = (iso) => { const d = new Date(iso); return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`; };
+            const formatDT = (iso) => { const d = new Date(iso); return `${d.getMonth()+1}/${d.getDate()} ${formatTime(iso)}`; };
 
-            const formatTimeOnly = (isoString) => {
-                const date = new Date(isoString);
-                return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-            };
-
-            const formatDateTime = (isoString) => {
-                const date = new Date(isoString);
-                return `${date.getMonth()+1}/${date.getDate()} ${formatTimeOnly(isoString)}`;
-            };
-
-            const syncData = async (currentLogs, mode = 'sync', silent = false) => {
+            const syncData = async (currLogs) => {
                 if (!config.token || !config.gistId) return;
                 setSyncing(true);
                 try {
-                    const response = await fetch(`https://api.github.com/gists/${config.gistId}?_t=${Date.now()}`, {
-                        headers: { 'Authorization': `token ${config.token}` }, cache: 'no-store'
-                    });
-                    let cloudContent = [];
-                    if (response.ok) {
-                        const gistData = await response.json();
-                        const content = gistData.files['data.json']?.content;
-                        if (content) cloudContent = JSON.parse(content);
-                    }
-                    let finalLogs = [];
-                    if (mode === 'pull') {
-                        finalLogs = cloudContent;
-                    } else {
-                        const uniqueMap = new Map();
-                        [...cloudContent, ...currentLogs].forEach(item => {
-                            if (!item.id) return;
-                            const existing = uniqueMap.get(item.id);
-                            if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) uniqueMap.set(item.id, item);
-                        });
-                        finalLogs = Array.from(uniqueMap.values());
-                    }
+                    const res = await fetch(`https://api.github.com/gists/${config.gistId}`, { headers: { 'Authorization': `token ${config.token}` } });
+                    let cloud = []; if (res.ok) { const d = await res.json(); cloud = JSON.parse(d.files['data.json']?.content || '[]'); }
+                    const map = new Map(); [...cloud, ...currLogs].forEach(i => { if(i.id && (!map.has(i.id) || (i.updatedAt||0) > (map.get(i.id).updatedAt||0))) map.set(i.id, i); });
+                    const final = Array.from(map.values());
                     await fetch(`https://api.github.com/gists/${config.gistId}`, {
-                        method: 'PATCH',
-                        headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ files: { 'data.json': { content: JSON.stringify(finalLogs) } } })
+                        method: 'PATCH', headers: { 'Authorization': `token ${config.token}` },
+                        body: JSON.stringify({ files: { 'data.json': { content: JSON.stringify(final) } } })
                     });
-                    setLogs(finalLogs);
-                    if (!silent) alert("同步成功");
-                } catch (err) { if (!silent) alert("失败: " + err.message); } finally { setSyncing(false); }
-            };
-
-            const exportData = async () => {
-                let lastDate = "";
-                const exportText = displayLogs.map(log => {
-                    const dateObj = new Date(log.startTime);
-                    const currentDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
-                    let datePrefix = (currentDate !== lastDate) ? `\n[--- ${currentDate} ---]\n` : "";
-                    lastDate = currentDate;
-                    return log.category === 'IDEA' 
-                        ? `${datePrefix}${formatTimeOnly(log.startTime)} | ${log.feeling}`
-                        : `${datePrefix}${formatTimeOnly(log.startTime)} | ${formatTimeOnly(log.endTime)} | ${CATEGORIES[log.category]?.label} | ${log.feeling}`;
-                }).join('\n');
-                try { await navigator.clipboard.writeText(exportText.trim()); alert("已复制！"); } catch (err) { alert("失败"); }
+                    setLogs(final);
+                } catch (e) { console.error(e); } finally { setSyncing(false); }
             };
 
             const stopTask = () => {
-                if (!activeTask) return;
                 const now = new Date();
-                const finalFeeling = selectedMembers.length > 0 ? `[@${selectedMembers.join('/')}] ${feeling}` : feeling;
-                const completedTask = { ...activeTask, category: currentCategory, feeling: finalFeeling, endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 60000)), updatedAt: Date.now() };
-                const newLogs = [completedTask, ...logs];
-                setLogs(newLogs); setActiveTask(null); setFeeling(''); setSelectedMembers([]); syncData(newLogs, 'sync', true);
+                const prefix = selectedQuickTags.length > 0 ? `[@${selectedQuickTags.join('/')}] ` : "";
+                const newTask = { ...activeTask, category: currentCategory, feeling: prefix + feeling, endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 60000)), updatedAt: Date.now() };
+                const newLogs = [newTask, ...logs];
+                setLogs(newLogs); setActiveTask(null); setFeeling(''); setSelectedQuickTags([]); syncData(newLogs);
             };
 
-            const saveQuickIdea = () => {
-                if (!ideaText.trim()) return;
-                const newLogs = [{ id: generateId(), category: 'IDEA', startTime: new Date().toISOString(), endTime: new Date().toISOString(), feeling: ideaText, duration: 0, updatedAt: Date.now() }, ...logs];
-                setLogs(newLogs); setIdeaText(''); syncData(newLogs, 'sync', true);
-            };
-
-            const renderFeeling = (text) => {
-                const memberMatch = text.match(/^\[@(.+?)\]\s*(.*)/);
-                if (memberMatch) {
-                    const members = memberMatch[1].split('/');
-                    const restText = memberMatch[2];
+            const renderContent = (text) => {
+                const match = text.match(/^\[@(.+?)\]\s*(.*)/);
+                if (match) {
                     return (
-                        <div className="text-xs leading-relaxed">
-                            <div className="flex flex-wrap gap-1 mb-1">
-                                {members.map(m => <span key={m} className="member-tag">{m}</span>)}
-                            </div>
-                            <div className="text-gray-300 break-words">{restText}</div>
+                        <div className="text-xs">
+                            <div className="flex flex-wrap gap-1 mb-1">{match[1].split('/').map(m => <span key={m} className="highlight-tag">{m}</span>)}</div>
+                            <div className="text-gray-300 break-words whitespace-pre-wrap">{match[2]}</div>
                         </div>
                     );
                 }
-                return <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap break-words">{text}</div>;
+                return <div className="text-xs text-gray-300 break-words whitespace-pre-wrap">{text}</div>;
             };
 
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.5.3</h1>
-                        <div className="flex items-center gap-3">
-                            <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
-                            <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
-                        </div>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.5.4</h1>
+                        <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
                     {showSettings && (
-                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50 text-xs space-y-4">
+                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50 text-[10px] space-y-4">
+                            <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full" />
+                            <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full" />
                             <div>
-                                <label className="text-gray-500 block mb-1">GitHub配置</label>
-                                <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="Token" className="w-full mb-2" />
-                                <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full" />
+                                <label className="text-gray-500 block mb-1">全标签快捷配置 (分类:子项,子项; 分类2:...)</label>
+                                <textarea value={config.tagMap} onChange={e => setConfig({...config, tagMap: e.target.value})} className="w-full h-24 text-[9px] p-2 bg-black" />
                             </div>
-                            <div>
-                                <label className="text-gray-500 block mb-1">家庭成员 (逗号分隔)</label>
-                                <input type="text" value={config.members} onChange={e => setConfig({...config, members: e.target.value})} placeholder="成员A,成员B..." className="w-full" />
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={() => syncData(logs, 'pull')} className="btn-action bg-gray-800 text-white flex-1 py-2 rounded">从云端覆盖</button>
-                                <button onClick={() => setShowSettings(false)} className="save-btn flex-1 py-2 rounded">保存关闭</button>
-                            </div>
+                            <button onClick={() => setShowSettings(false)} className="save-btn w-full py-2 rounded">保存设置</button>
                         </div>
                     )}
 
-                    {!editingId && (
-                        <div className="space-y-4 mb-8">
-                            <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2">
-                                <textarea placeholder="💡 灵感想法..." value={ideaText} onChange={e => setIdeaText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveQuickIdea(); } }} rows="1" className="auto-resize-textarea flex-1 text-xs py-1" />
-                                <button onClick={saveQuickIdea} className="bg-[#eab308] text-black px-3 py-1.5 rounded text-xs font-bold shrink-0 mb-0.5">记下</button>
+                    {!editingId && ( activeTask ? (
+                        <div className="glass p-5 rounded-xl border-[#00ff41]/40 mb-8">
+                            <div className="flex justify-between items-center mb-4">
+                                <span className="text-[10px] font-bold text-[#00ff41] bg-[#00ff41]/10 px-2 py-0.5 rounded">{CATEGORIES[currentCategory].label}</span>
+                                <span className="text-xs animate-pulse text-red-500">正在记录...</span>
                             </div>
-
-                            <div className="glass p-5 rounded-xl border-[#00ff41]/20">
-                                <div className="grid grid-cols-3 gap-2 mb-4">
-                                    {Object.values(CATEGORIES).filter(c => c.id !== 'IDEA').map(cat => (
-                                        <button key={cat.id} onClick={() => { setCurrentCategory(cat.id); setSelectedMembers([]); }} className={`text-[10px] py-2 rounded border transition-all ${currentCategory === cat.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}>{cat.label}</button>
+                            {currentSubTags.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    {currentSubTags.map(t => (
+                                        <button key={t} onClick={() => setSelectedQuickTags(p => p.includes(t) ? p.filter(x => x!==t) : [...p, t])} className={`q-tag ${selectedQuickTags.includes(t) ? 'active-tag' : 'text-gray-500'}`}>{t}</button>
                                     ))}
                                 </div>
-
-                                {currentCategory === 'FAMILY' && (
-                                    <div className="flex flex-wrap gap-2 mb-3 animate-in fade-in slide-in-from-top-1">
-                                        {memberList.map(m => (
-                                            <button key={m} onClick={() => setSelectedMembers(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m])} className={`text-[9px] px-2 py-0.5 rounded-full border ${selectedMembers.includes(m) ? 'bg-[#ec4899] border-[#ec4899] text-white' : 'border-gray-800 text-gray-500'}`}>{m}</button>
-                                        ))}
-                                    </div>
-                                )}
-
-                                <textarea placeholder={activeTask ? "记录此时此刻..." : "要做什么内容..."} value={feeling} onChange={e => setFeeling(e.target.value)} rows="1" className="auto-resize-textarea w-full text-sm mb-4 bg-transparent border-b border-gray-800 pb-1 leading-relaxed min-h-[2rem]" />
-                                
-                                {!activeTask ? (
-                                    <div className="space-y-3">
-                                        <button onClick={() => { setActiveTask({ id: generateId(), category: currentCategory, startTime: new Date().toISOString(), updatedAt: Date.now() }); setFeeling(''); }} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始记录</button>
-                                        <div className="flex justify-center text-[10px] text-gray-500"><button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="border-b border-gray-800">+ 补助补录</button></div>
-                                    </div>
-                                ) : <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm animate-pulse">停止记录并同步</button>}
+                            )}
+                            <textarea placeholder="补充细节..." value={feeling} onChange={e => setFeeling(e.target.value)} className="auto-resize-textarea w-full text-sm mb-4 border-b border-gray-800" />
+                            <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm">结束并保存</button>
+                        </div>
+                    ) : (
+                        <div className="space-y-4 mb-8">
+                            <div className="glass p-3 rounded-xl border-dashed border-[#eab308]/40 flex items-end gap-2">
+                                <textarea placeholder="💡 瞬时灵感..." value={ideaText} onChange={e => setIdeaText(e.target.value)} className="auto-resize-textarea flex-1 text-xs" />
+                                <button onClick={() => { if(!ideaText.trim())return; const n=[{id:generateId(),category:'IDEA',startTime:new Date().toISOString(),endTime:new Date().toISOString(),feeling:ideaText,updatedAt:Date.now()},...logs]; setLogs(n); setIdeaText(''); syncData(n); }} className="bg-[#eab308] text-black px-3 py-1 rounded text-xs font-bold">记下</button>
+                            </div>
+                            <div className="glass p-5 rounded-xl">
+                                <div className="grid grid-cols-3 gap-2 mb-4">
+                                    {Object.values(CATEGORIES).filter(c=>c.id!=='IDEA').map(c => (
+                                        <button key={c.id} onClick={() => {setCurrentCategory(c.id); setSelectedQuickTags([]);}} className={`text-[10px] py-2 rounded border transition-all ${currentCategory === c.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}>{c.label}</button>
+                                    ))}
+                                </div>
+                                <button onClick={() => setActiveTask({ id: generateId(), category: currentCategory, startTime: new Date().toISOString(), updatedAt: Date.now() })} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开启新纪元</button>
                             </div>
                         </div>
-                    )}
-
-                    <div className="flex justify-between items-center mb-4 px-1 text-[10px] text-gray-500 font-bold tracking-widest uppercase"><h2>历史日志</h2><button onClick={exportData} className="text-[#00ff41] border border-[#00ff41]/30 px-2 py-0.5 rounded">导出文本</button></div>
+                    ))}
 
                     <div className="space-y-3">
                         {displayLogs.map(log => (
                             <div key={log.id} className={`glass p-4 rounded-xl ${log.category === 'IDEA' ? 'idea-card' : ''}`}>
                                 {editingId === log.id ? (
                                     <div className="space-y-4">
-                                        <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs w-full">
-                                            {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                                        </select>
-                                        <div className="space-y-2 bg-black/20 p-2 rounded border border-gray-800">
-                                            <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent border-none" />
-                                            {editDraft.category !== 'IDEA' && <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent border-none" />}
-                                        </div>
+                                        <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px]" />
                                         <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px]" />
-                                        <div className="flex justify-between">
-                                            <button onClick={() => { if(confirm("删除？")){ const nLogs=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(nLogs); setEditingId(null); syncData(nLogs,'sync',true); } }} className="text-[10px] text-red-500">删除</button>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => setEditingId(null)} className="text-[10px] text-gray-500 px-2">取消</button>
-                                                <button onClick={() => { const s=new Date(editDraft.startTime); const e=new Date(editDraft.endTime); const nDur=editDraft.category==='IDEA'?0:Math.max(1,Math.round((e-s)/60000)); const nLogs=logs.map(l=>l.id===editingId?{...editDraft, duration:nDur, updatedAt:Date.now()}:l); setLogs(nLogs); setEditingId(null); syncData(nLogs,'sync',true); }} className="text-[10px] text-[#00ff41] border border-[#00ff41] px-3 py-1 rounded">更新</button>
-                                            </div>
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={() => setEditingId(null)} className="text-[10px] px-2 text-gray-500">取消</button>
+                                            <button onClick={() => { const n=logs.map(l=>l.id===editingId?{...editDraft, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); }} className="text-[10px] text-[#00ff41] border border-[#00ff41] px-3 py-1 rounded">更新</button>
                                         </div>
                                     </div>
                                 ) : (
                                     <div className="flex justify-between items-start">
                                         <div className="flex-1 overflow-hidden">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-[9px] font-bold px-1 rounded" style={{backgroundColor: CATEGORIES[log.category]?.color + '22', color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
-                                                <span className="text-[9px] text-gray-600">{log.category === 'IDEA' ? formatDateTime(log.startTime) : `${formatDateTime(log.startTime)} - ${formatTimeOnly(log.endTime)}`}</span>
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className="text-[9px] font-bold px-1 rounded" style={{backgroundColor: CATEGORIES[log.category]?.color+'22', color: CATEGORIES[log.category]?.color}}>{CATEGORIES[log.category]?.label}</span>
+                                                <span className="text-[9px] text-gray-600">{log.category==='IDEA'?formatDT(log.startTime):`${formatDT(log.startTime)} - ${formatTime(log.endTime)}`}</span>
                                             </div>
-                                            {renderFeeling(log.feeling)}
+                                            {renderContent(log.feeling)}
                                         </div>
                                         <div className="flex flex-col items-end shrink-0 ml-4 gap-2">
-                                            {log.category !== 'IDEA' && <div className="text-sm font-bold text-[#00ff41]">{log.duration}m</div>}
-                                            <button onClick={() => { setEditingId(log.id); setEditDraft({...log}); }} className="edit-btn">编辑</button>
+                                            {log.category!=='IDEA' && <div className="text-sm font-bold text-[#00ff41]">{log.duration}m</div>}
+                                            <button onClick={() => {setEditingId(log.id); setEditDraft({...log});}} className="edit-btn">编辑</button>
                                         </div>
                                     </div>
                                 )}
