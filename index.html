@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.5.6</title>
+    <title>时间炼金术 v1.5.7</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -27,7 +27,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
         const CATEGORIES = {
             CORE: { id: 'CORE', label: '交易研究', color: '#00ff41' },
@@ -58,6 +58,9 @@
             const [showBackfill, setShowBackfill] = useState(false);
             const [backfillData, setBackfillData] = useState({ start: "", end: "" });
 
+            // 优化：设置面板的临时缓存，解决输入中文黑屏问题
+            const [tempConfig, setTempConfig] = useState(null);
+
             useEffect(() => { localStorage.setItem('timeLogs', JSON.stringify(logs)); }, [logs]);
             useEffect(() => { localStorage.setItem('activeTask', JSON.stringify(activeTask)); }, [activeTask]);
             useEffect(() => { localStorage.setItem('syncConfig', JSON.stringify(config)); }, [config]);
@@ -65,11 +68,14 @@
             const displayLogs = useMemo(() => logs.filter(l => !l.deleted).sort((a, b) => new Date(b.startTime) - new Date(a.startTime)), [logs]);
 
             const currentSubTags = useMemo(() => {
-                const label = CATEGORIES[currentCategory]?.label;
-                if (!config.tagMap || !label) return [];
-                const parts = config.tagMap.split(';');
-                const target = parts.find(p => p.trim().startsWith(label));
-                return target ? target.split(':')[1].split(',').map(t => t.trim()) : [];
+                try {
+                    const label = CATEGORIES[currentCategory]?.label;
+                    if (!config.tagMap || !label) return [];
+                    const parts = config.tagMap.split(';');
+                    const target = parts.find(p => p.trim().startsWith(label));
+                    if (!target || !target.includes(':')) return [];
+                    return target.split(':')[1].split(',').filter(t => t.trim() !== "").map(t => t.trim());
+                } catch (e) { return []; }
             }, [currentCategory, config.tagMap]);
 
             const toLocalISO = (iso) => {
@@ -120,6 +126,7 @@
             };
 
             const renderContent = (text) => {
+                if (!text) return null;
                 const match = text.match(/^\[@(.+?)\]\s*(.*)/);
                 if (match) {
                     return (
@@ -135,33 +142,38 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.5.6</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.5.7</h1>
                         <div className="flex items-center gap-3">
                             <span className="text-[9px] text-gray-500">{syncing ? '同步中...' : '在线'}</span>
-                            <button onClick={() => setShowSettings(!showSettings)} className="text-gray-500 text-xl">⚙️</button>
+                            <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                         </div>
                     </header>
 
-                    {showSettings && (
-                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50 text-[10px] space-y-4">
-                            <input type="password" value={config.token} onChange={e => setConfig({...config, token: e.target.value})} placeholder="GitHub Token" className="w-full" />
-                            <input type="text" value={config.gistId} onChange={e => setConfig({...config, gistId: e.target.value})} placeholder="Gist ID" className="w-full" />
+                    {showSettings && tempConfig && (
+                        <div className="glass p-5 rounded-xl mb-6 border-blue-500/50 text-[10px] space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                            <input type="password" value={tempConfig.token} onChange={e => setTempConfig({...tempConfig, token: e.target.value})} placeholder="GitHub Token" className="w-full" />
+                            <input type="text" value={tempConfig.gistId} onChange={e => setTempConfig({...tempConfig, gistId: e.target.value})} placeholder="Gist ID" className="w-full" />
                             <div>
-                                <label className="text-gray-500 block mb-1">全标签快捷配置 (分类:项,项; 分类2:...)</label>
-                                <textarea value={config.tagMap} onChange={e => setConfig({...config, tagMap: e.target.value})} className="w-full h-24 text-[9px] p-2 bg-black" />
+                                <label className="text-gray-500 block mb-1">全标签快捷配置 (支持中文，点击保存生效)</label>
+                                <textarea 
+                                    value={tempConfig.tagMap} 
+                                    onChange={e => setTempConfig({...tempConfig, tagMap: e.target.value})} 
+                                    className="w-full h-32 text-[9px] p-2 bg-black leading-relaxed" 
+                                    placeholder="分类:项,项;..."
+                                />
                             </div>
                             <div className="flex gap-2">
                                 <button onClick={() => syncData(logs, 'pull')} className="bg-gray-800 text-white flex-1 py-2 rounded">从云端覆盖</button>
-                                <button onClick={() => setShowSettings(false)} className="save-btn flex-1 py-2 rounded text-black font-bold">保存并关闭</button>
+                                <button onClick={() => { setConfig({...tempConfig}); setShowSettings(false); }} className="save-btn flex-1 py-2 rounded text-black font-bold">保存并关闭</button>
                             </div>
                         </div>
                     )}
 
                     {!editingId && ( activeTask ? (
-                        <div className="glass p-5 rounded-xl border-[#00ff41]/40 mb-8 animate-in fade-in duration-300">
+                        <div className="glass p-5 rounded-xl border-[#00ff41]/40 mb-8">
                             <div className="flex justify-between items-center mb-4">
                                 <span className="text-[10px] font-bold text-[#00ff41] bg-[#00ff41]/10 px-2 py-0.5 rounded">{CATEGORIES[currentCategory].label}</span>
-                                <span className="text-xs animate-pulse text-red-500 font-bold">正在计时...</span>
+                                <span className="text-xs animate-pulse text-red-500 font-bold">计时中</span>
                             </div>
                             {currentSubTags.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mb-4">
@@ -170,8 +182,8 @@
                                     ))}
                                 </div>
                             )}
-                            <textarea placeholder="补充此时细节..." value={feeling} onChange={e => setFeeling(e.target.value)} rows="1" className="auto-resize-textarea w-full text-sm mb-4 border-b border-gray-800 leading-relaxed" />
-                            <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm shadow-lg shadow-red-900/20">结束并同步</button>
+                            <textarea placeholder="补充细节..." value={feeling} onChange={e => setFeeling(e.target.value)} rows="1" className="auto-resize-textarea w-full text-sm mb-4 border-b border-gray-800 leading-relaxed" />
+                            <button onClick={stopTask} className="w-full bg-red-600 text-white font-bold py-3 rounded text-sm">结束并保存</button>
                         </div>
                     ) : (
                         <div className="space-y-4 mb-8">
@@ -188,11 +200,11 @@
                                 <div className="space-y-3">
                                     <button onClick={() => setActiveTask({ id: generateId(), category: currentCategory, startTime: new Date().toISOString(), updatedAt: Date.now() })} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm">开始记录</button>
                                     <div className="flex justify-center text-[10px] text-gray-500">
-                                        <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="border-b border-gray-800 text-gray-400 hover:text-[#00ff41] transition-colors">+ 补录历史</button>
+                                        <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="border-b border-gray-800 text-gray-400">+ 补录历史</button>
                                     </div>
                                     {showBackfill && (
-                                        <div className="mt-4 pt-4 border-t border-gray-800 space-y-4 animate-in slide-in-from-top-2">
-                                            <div className="flex gap-2">{[15, 30, 60].map(m => <button key={m} onClick={() => { const now=new Date(); setBackfillData({start:toLocalISO(new Date(now.getTime()-m*60000).toISOString()), end:toLocalISO(now.toISOString())}) }} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px] active:bg-[#00ff41]/10">{m}m前</button>)}</div>
+                                        <div className="mt-4 pt-4 border-t border-gray-800 space-y-4">
+                                            <div className="flex gap-2">{[15, 30, 60].map(m => <button key={m} onClick={() => { const now=new Date(); setBackfillData({start:toLocalISO(new Date(now.getTime()-m*60000).toISOString()), end:toLocalISO(now.toISOString())}) }} className="flex-1 py-1.5 border border-gray-700 rounded text-[10px]">{m}m前</button>)}</div>
                                             <div className="space-y-2 text-[10px]">
                                                 <div className="flex items-center gap-2 text-gray-500"><span>开始</span><input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1" /></div>
                                                 <div className="flex items-center gap-2 text-gray-500"><span>结束</span><input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1" /></div>
@@ -205,11 +217,9 @@
                         </div>
                     ))}
 
-                    <div className="flex justify-between items-center mb-4 px-1 text-[10px] text-gray-500 font-bold tracking-widest uppercase"><h2>历史日志</h2></div>
-
                     <div className="space-y-3">
                         {displayLogs.map(log => (
-                            <div key={log.id} className={`glass p-4 rounded-xl transition-all ${log.category === 'IDEA' ? 'idea-card' : 'border-gray-800 hover:border-gray-700'}`}>
+                            <div key={log.id} className={`glass p-4 rounded-xl ${log.category === 'IDEA' ? 'idea-card' : 'border-gray-800'}`}>
                                 {editingId === log.id ? (
                                     <div className="space-y-4">
                                         <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs w-full">
@@ -219,9 +229,9 @@
                                             <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => setEditDraft({...editDraft, startTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent border-none" />
                                             {editDraft.category !== 'IDEA' && <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => setEditDraft({...editDraft, endTime: new Date(e.target.value).toISOString()})} className="w-full text-[10px] bg-transparent border-none" />}
                                         </div>
-                                        <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px] leading-relaxed" />
-                                        <div className="flex justify-end gap-2 items-center">
-                                            <button onClick={() => { if(confirm("删除此记录？")){ const n=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); } }} className="text-[10px] text-red-500 px-3 py-1 hover:bg-red-500/10 rounded">删除</button>
+                                        <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px]" />
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={() => { if(confirm("删除记录？")){ const n=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); } }} className="text-[10px] text-red-500 px-3 py-1">删除</button>
                                             <button onClick={() => setEditingId(null)} className="text-[10px] px-3 py-1 text-gray-500">取消</button>
                                             <button onClick={() => { const s=new Date(editDraft.startTime); const e=new Date(editDraft.endTime); const nDur=editDraft.category==='IDEA'?0:Math.max(1,Math.round((e-s)/60000)); const n=logs.map(l=>l.id===editingId?{...editDraft, duration:nDur, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); }} className="text-[10px] text-[#00ff41] border border-[#00ff41] px-4 py-1 rounded font-bold">保存修改</button>
                                         </div>
@@ -237,7 +247,7 @@
                                         </div>
                                         <div className="flex flex-col items-end shrink-0 ml-4 gap-2">
                                             {log.category!=='IDEA' && <div className="text-sm font-bold text-[#00ff41]">{log.duration}m</div>}
-                                            <button onClick={() => {setEditingId(log.id); setEditDraft({...log});}} className="edit-btn hover:text-white hover:border-gray-500 transition-colors">编辑</button>
+                                            <button onClick={() => {setEditingId(log.id); setEditDraft({...log});}} className="edit-btn">编辑</button>
                                         </div>
                                     </div>
                                 )}
