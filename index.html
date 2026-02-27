@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.5.9</title>
+    <title>时间炼金术 v1.6.0</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -54,6 +54,7 @@
             const [selectedQuickTags, setSelectedQuickTags] = useState([]);
             const [editingId, setEditingId] = useState(null);
             const [editDraft, setEditDraft] = useState(null);
+            const [editQuickTags, setEditQuickTags] = useState([]);
             const [showSettings, setShowSettings] = useState(false);
             const [showBackfill, setShowBackfill] = useState(false);
             const [backfillData, setBackfillData] = useState({ start: "", end: "" });
@@ -65,6 +66,7 @@
 
             const displayLogs = useMemo(() => logs.filter(l => !l.deleted).sort((a, b) => new Date(b.startTime) - new Date(a.startTime)), [logs]);
 
+            // 当前分类的快捷标签（用于计时和补录）
             const currentSubTags = useMemo(() => {
                 try {
                     const label = CATEGORIES[currentCategory]?.label;
@@ -79,6 +81,22 @@
                     return content.split(',').map(t => t.trim()).filter(t => t !== "");
                 } catch (e) { return []; }
             }, [currentCategory, config.tagMap]);
+
+            // 编辑态分类的快捷标签
+            const editSubTags = useMemo(() => {
+                try {
+                    const label = CATEGORIES[editDraft?.category]?.label;
+                    if (!config.tagMap || !label) return [];
+                    const lines = config.tagMap.split(/[\n;]/);
+                    const targetLine = lines.find(line => {
+                        const trimmed = line.trim();
+                        return trimmed.startsWith(label + ":") || trimmed.startsWith(label + "：");
+                    });
+                    if (!targetLine) return [];
+                    const content = targetLine.includes(':') ? targetLine.split(':')[1] : targetLine.split('：')[1];
+                    return content.split(',').map(t => t.trim()).filter(t => t !== "");
+                } catch (e) { return []; }
+            }, [editDraft?.category, config.tagMap]);
 
             const toLocalISO = (iso) => {
                 if (!iso) return "";
@@ -144,7 +162,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.5.9</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.6.0</h1>
                         <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
@@ -167,7 +185,6 @@
                         </div>
                     )}
 
-                    {/* v1.5.9 核心优化：计时状态与分类选择解耦，允许自由切换 */}
                     <div className="mb-6">
                         <div className="grid grid-cols-3 gap-2">
                             {Object.values(CATEGORIES).filter(c=>c.id!=='IDEA').map(c => (
@@ -176,7 +193,6 @@
                                     onClick={() => {
                                         setCurrentCategory(c.id); 
                                         setSelectedQuickTags([]); 
-                                        // 如果正在计时，同步更新计时任务的分类
                                         if(activeTask) setActiveTask({...activeTask, category: c.id});
                                     }} 
                                     className={`text-[10px] py-2 rounded border transition-all ${currentCategory === c.id ? 'border-[#00ff41] bg-[#00ff41]/10 text-[#00ff41]' : 'border-gray-800 text-gray-500'}`}
@@ -216,7 +232,7 @@
                             <div className="glass p-5 rounded-xl">
                                 <button onClick={() => setActiveTask({ id: generateId(), category: currentCategory, startTime: new Date().toISOString(), updatedAt: Date.now() })} className="w-full bg-[#00ff41] text-black font-bold py-3 rounded text-sm transition-transform active:scale-95">开始记录</button>
                                 <div className="flex justify-center text-[10px] text-gray-500 mt-4">
-                                    <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}) }} className="border-b border-gray-800 text-gray-400">+ 补录历史</button>
+                                    <button onClick={() => { setShowBackfill(!showBackfill); setBackfillData({start:toLocalISO(new Date(Date.now()-3600000).toISOString()), end:toLocalISO(new Date().toISOString())}); setSelectedQuickTags([]); setFeeling(''); }} className="border-b border-gray-800 text-gray-400">+ 补录历史</button>
                                 </div>
                                 {showBackfill && (
                                     <div className="mt-4 pt-4 border-t border-gray-800 space-y-4">
@@ -225,7 +241,20 @@
                                             <div className="flex items-center gap-2 text-gray-500"><span>开始</span><input type="datetime-local" value={backfillData.start} onChange={e => setBackfillData({...backfillData, start: e.target.value})} className="flex-1" /></div>
                                             <div className="flex items-center gap-2 text-gray-500"><span>结束</span><input type="datetime-local" value={backfillData.end} onChange={e => setBackfillData({...backfillData, end: e.target.value})} className="flex-1" /></div>
                                         </div>
-                                        <button onClick={() => { const s=new Date(backfillData.start); const e=new Date(backfillData.end); const n=[{id:generateId(), category:currentCategory, startTime:s.toISOString(), endTime:e.toISOString(), duration:Math.max(1,Math.round((e-s)/60000)), feeling, updatedAt:Date.now()}, ...logs]; setLogs(n); setFeeling(''); setShowBackfill(false); syncData(n); }} className="w-full py-2 bg-gray-800 text-[#00ff41] rounded text-[10px] font-bold border border-[#00ff41]/30">确认补录</button>
+                                        {currentSubTags.length > 0 && (
+                                            <div className="flex flex-wrap gap-2">
+                                                {currentSubTags.map(t => (
+                                                    <button key={t} onClick={() => setSelectedQuickTags(p => p.includes(t) ? p.filter(x => x!==t) : [...p, t])} className={`q-tag ${selectedQuickTags.includes(t) ? 'active-tag' : 'text-gray-500'}`}>{t}</button>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <textarea placeholder="有什么想记录的？" value={feeling} onChange={e => setFeeling(e.target.value)} rows="2" className="w-full text-xs p-2 rounded" style={{background:'#111', border:'1px solid #333'}} />
+                                        <button onClick={() => {
+                                            const s=new Date(backfillData.start); const e=new Date(backfillData.end);
+                                            const prefix = selectedQuickTags.length > 0 ? `[@${selectedQuickTags.join('/')}] ` : "";
+                                            const n=[{id:generateId(), category:currentCategory, startTime:s.toISOString(), endTime:e.toISOString(), duration:Math.max(1,Math.round((e-s)/60000)), feeling: prefix + feeling, updatedAt:Date.now()}, ...logs];
+                                            setLogs(n); setFeeling(''); setSelectedQuickTags([]); setShowBackfill(false); syncData(n);
+                                        }} className="w-full py-2 bg-gray-800 text-[#00ff41] rounded text-[10px] font-bold border border-[#00ff41]/30">确认补录</button>
                                     </div>
                                 )}
                             </div>
@@ -237,34 +266,28 @@
                             <div key={log.id} className={`glass p-4 rounded-xl ${log.category === 'IDEA' ? 'idea-card' : 'border-gray-800'}`}>
                                 {editingId === log.id ? (
                                     <div className="space-y-4">
-                                        <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs w-full">
+                                        <select value={editDraft.category} onChange={e => { setEditDraft({...editDraft, category: e.target.value}); setEditQuickTags([]); }} className="text-xs w-full">
                                             {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                                         </select>
-                                        <div className="space-y-2 text-[10px]">
-                                            <div className="flex items-center gap-2 text-gray-500">
-                                                <span>开始</span>
-                                                <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => {
-                                                    const s = new Date(e.target.value);
-                                                    const end = new Date(editDraft.endTime);
-                                                    setEditDraft({...editDraft, startTime: s.toISOString(), duration: Math.max(1, Math.round((end - s) / 60000))});
-                                                }} className="flex-1" />
+                                        {editSubTags.length > 0 && (
+                                            <div className="flex flex-wrap gap-2">
+                                                {editSubTags.map(t => (
+                                                    <button key={t} onClick={() => setEditQuickTags(p => p.includes(t) ? p.filter(x => x!==t) : [...p, t])} className={`q-tag ${editQuickTags.includes(t) ? 'active-tag' : 'text-gray-500'}`}>{t}</button>
+                                                ))}
+                                                <button onClick={() => {
+                                                    if (editQuickTags.length === 0) return;
+                                                    const prefix = `[@${editQuickTags.join('/')}] `;
+                                                    const bare = editDraft.feeling.replace(/^\[@.+?\]\s*/, '');
+                                                    setEditDraft({...editDraft, feeling: prefix + bare});
+                                                    setEditQuickTags([]);
+                                                }} className="q-tag text-gray-400" style={{borderStyle:'dashed'}}>应用标签</button>
                                             </div>
-                                            {editDraft.category !== 'IDEA' && (
-                                                <div className="flex items-center gap-2 text-gray-500">
-                                                    <span>结束</span>
-                                                    <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => {
-                                                        const end = new Date(e.target.value);
-                                                        const s = new Date(editDraft.startTime);
-                                                        setEditDraft({...editDraft, endTime: end.toISOString(), duration: Math.max(1, Math.round((end - s) / 60000))});
-                                                    }} className="flex-1" />
-                                                </div>
-                                            )}
-                                        </div>
+                                        )}
                                         <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px]" />
                                         <div className="flex justify-end gap-2">
-                                            <button onClick={() => { if(confirm("删除？")){ const n=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); } }} className="text-[10px] text-red-500 px-3 py-1">删除</button>
-                                            <button onClick={() => setEditingId(null)} className="text-[10px] px-3 py-1 text-gray-500">取消</button>
-                                            <button onClick={() => { const n=logs.map(l=>l.id===editingId?{...editDraft, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); }} className="text-[10px] text-[#00ff41] border border-[#00ff41] px-4 py-1 rounded font-bold">更新</button>
+                                            <button onClick={() => { if(confirm("删除？")){ const n=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); setEditQuickTags([]); syncData(n); } }} className="text-[10px] text-red-500 px-3 py-1">删除</button>
+                                            <button onClick={() => { setEditingId(null); setEditQuickTags([]); }} className="text-[10px] px-3 py-1 text-gray-500">取消</button>
+                                            <button onClick={() => { const n=logs.map(l=>l.id===editingId?{...editDraft, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); setEditQuickTags([]); syncData(n); }} className="text-[10px] text-[#00ff41] border border-[#00ff41] px-4 py-1 rounded font-bold">更新</button>
                                         </div>
                                     </div>
                                 ) : (
@@ -278,7 +301,7 @@
                                         </div>
                                         <div className="flex flex-col items-end shrink-0 ml-4 gap-2">
                                             {log.category!=='IDEA' && <div className="text-sm font-bold text-[#00ff41]">{log.duration}m</div>}
-                                            <button onClick={() => {setEditingId(log.id); setEditDraft({...log});}} className="edit-btn">编辑</button>
+                                            <button onClick={() => { setEditingId(log.id); setEditDraft({...log}); setEditQuickTags([]); }} className="edit-btn">编辑</button>
                                         </div>
                                     </div>
                                 )}
