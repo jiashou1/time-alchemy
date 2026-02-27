@@ -240,6 +240,26 @@
                                         <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="text-xs w-full">
                                             {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                                         </select>
+                                        <div className="space-y-2 text-[10px]">
+                                            <div className="flex items-center gap-2 text-gray-500">
+                                                <span>开始</span>
+                                                <input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => {
+                                                    const s = new Date(e.target.value);
+                                                    const end = new Date(editDraft.endTime);
+                                                    setEditDraft({...editDraft, startTime: s.toISOString(), duration: Math.max(1, Math.round((end - s) / 60000))});
+                                                }} className="flex-1" />
+                                            </div>
+                                            {editDraft.category !== 'IDEA' && (
+                                                <div className="flex items-center gap-2 text-gray-500">
+                                                    <span>结束</span>
+                                                    <input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => {
+                                                        const end = new Date(e.target.value);
+                                                        const s = new Date(editDraft.startTime);
+                                                        setEditDraft({...editDraft, endTime: end.toISOString(), duration: Math.max(1, Math.round((end - s) / 60000))});
+                                                    }} className="flex-1" />
+                                                </div>
+                                            )}
+                                        </div>
                                         <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px]" />
                                         <div className="flex justify-end gap-2">
                                             <button onClick={() => { if(confirm("删除？")){ const n=logs.map(l=>l.id===log.id?{...l, deleted:true, updatedAt:Date.now()}:l); setLogs(n); setEditingId(null); syncData(n); } }} className="text-[10px] text-red-500 px-3 py-1">删除</button>
