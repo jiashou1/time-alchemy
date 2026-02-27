@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.6.0</title>
+    <title>时间炼金术 v1.6.1</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -162,7 +162,7 @@
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.6.0</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.6.1</h1>
                         <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
@@ -269,18 +269,23 @@
                                         <select value={editDraft.category} onChange={e => { setEditDraft({...editDraft, category: e.target.value}); setEditQuickTags([]); }} className="text-xs w-full">
                                             {Object.values(CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                                         </select>
+                                        {editDraft.category !== 'IDEA' && (
+                                            <div className="space-y-2 text-[10px]">
+                                                <div className="flex items-center gap-2 text-gray-500"><span>开始</span><input type="datetime-local" value={toLocalISO(editDraft.startTime)} onChange={e => { const s=new Date(e.target.value); const end=new Date(editDraft.endTime); setEditDraft({...editDraft, startTime:s.toISOString(), duration:Math.max(1,Math.round((end-s)/60000))}); }} className="flex-1" /></div>
+                                                <div className="flex items-center gap-2 text-gray-500"><span>结束</span><input type="datetime-local" value={toLocalISO(editDraft.endTime)} onChange={e => { const s=new Date(editDraft.startTime); const end=new Date(e.target.value); setEditDraft({...editDraft, endTime:end.toISOString(), duration:Math.max(1,Math.round((end-s)/60000))}); }} className="flex-1" /></div>
+                                            </div>
+                                        )}
                                         {editSubTags.length > 0 && (
                                             <div className="flex flex-wrap gap-2">
                                                 {editSubTags.map(t => (
-                                                    <button key={t} onClick={() => setEditQuickTags(p => p.includes(t) ? p.filter(x => x!==t) : [...p, t])} className={`q-tag ${editQuickTags.includes(t) ? 'active-tag' : 'text-gray-500'}`}>{t}</button>
+                                                    <button key={t} onClick={() => {
+                                                        const next = editQuickTags.includes(t) ? editQuickTags.filter(x => x!==t) : [...editQuickTags, t];
+                                                        setEditQuickTags(next);
+                                                        const bare = editDraft.feeling.replace(/^\[@.+?\]\s*/, '');
+                                                        const prefix = next.length > 0 ? `[@${next.join('/')}] ` : "";
+                                                        setEditDraft({...editDraft, feeling: prefix + bare});
+                                                    }} className={`q-tag ${editQuickTags.includes(t) ? 'active-tag' : 'text-gray-500'}`}>{t}</button>
                                                 ))}
-                                                <button onClick={() => {
-                                                    if (editQuickTags.length === 0) return;
-                                                    const prefix = `[@${editQuickTags.join('/')}] `;
-                                                    const bare = editDraft.feeling.replace(/^\[@.+?\]\s*/, '');
-                                                    setEditDraft({...editDraft, feeling: prefix + bare});
-                                                    setEditQuickTags([]);
-                                                }} className="q-tag text-gray-400" style={{borderStyle:'dashed'}}>应用标签</button>
                                             </div>
                                         )}
                                         <textarea value={editDraft.feeling} onChange={e => setEditDraft({...editDraft, feeling: e.target.value})} className="w-full text-xs min-h-[80px]" />
@@ -301,7 +306,12 @@
                                         </div>
                                         <div className="flex flex-col items-end shrink-0 ml-4 gap-2">
                                             {log.category!=='IDEA' && <div className="text-sm font-bold text-[#00ff41]">{log.duration}m</div>}
-                                            <button onClick={() => { setEditingId(log.id); setEditDraft({...log}); setEditQuickTags([]); }} className="edit-btn">编辑</button>
+                                            <button onClick={() => {
+                                                setEditingId(log.id);
+                                                setEditDraft({...log});
+                                                const match = log.feeling?.match(/^\[@(.+?)\]/);
+                                                setEditQuickTags(match ? match[1].split('/') : []);
+                                            }} className="edit-btn">编辑</button>
                                         </div>
                                     </div>
                                 )}
