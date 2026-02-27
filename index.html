@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.7.0</title>
+    <title>时间炼金术 v1.7.1</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -56,7 +56,7 @@
         const App = () => {
             const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('timeLogs') || '[]'));
             const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
-            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || `{"token":"","gistId":"","tagMap":"${DEFAULT_TAGS}","apiKey":"","modelName":"gemini-2.0-flash"}`));
+            const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || `{"token":"","gistId":"","tagMap":"${DEFAULT_TAGS}","apiKey":"","modelName":"gemini-3-flash-preview"}`));
             const [syncing, setSyncing] = useState(false);
             const [feeling, setFeeling] = useState('');
             const [ideaText, setIdeaText] = useState('');
@@ -244,7 +244,7 @@
             // 调用 Gemini API
             const callGemini = async (messages) => {
                 const apiKey = config.apiKey;
-                const model = config.modelName || 'gemini-2.0-flash';
+                const model = config.modelName || 'gemini-3-flash-preview';
                 if (!apiKey) throw new Error('请先在设置中填写 Gemini API Key');
                 const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
                     method: 'POST',
@@ -311,7 +311,7 @@ ${data.recordsText}
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.0</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.1</h1>
                         <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
@@ -330,7 +330,7 @@ ${data.recordsText}
                             <div className="border-t border-gray-800 pt-4 space-y-3">
                                 <label className="text-gray-500 block">AI 复盘设置</label>
                                 <input type="password" value={tempConfig.apiKey||''} onChange={e => setTempConfig({...tempConfig, apiKey: e.target.value})} placeholder="Gemini API Key" className="w-full" />
-                                <input type="text" value={tempConfig.modelName||'gemini-2.0-flash'} onChange={e => setTempConfig({...tempConfig, modelName: e.target.value})} placeholder="模型名称 (默认 gemini-2.0-flash)" className="w-full" />
+                                <input type="text" value={tempConfig.modelName ?? ''} onChange={e => setTempConfig({...tempConfig, modelName: e.target.value})} placeholder="模型名称 (如 gemini-3-flash-preview)" className="w-full" />
                             </div>
                             <div className="flex gap-2">
                                 <button onClick={() => syncData(logs, 'pull')} className="bg-gray-800 text-white flex-1 py-2 rounded">从云端覆盖</button>
@@ -485,20 +485,53 @@ ${data.recordsText}
                                 ))}
                             </div>
 
-                            {/* 数据摘要 */}
+                            {/* 数据摘要饼图 */}
                             {(() => {
                                 const data = buildReviewData(reviewPeriod);
                                 if (!data) return <div className="text-center text-gray-600 text-xs py-4">该时间段暂无记录</div>;
+                                const entries = Object.entries(data.summary).sort((a, b) => b[1] - a[1]);
+                                const total = entries.reduce((s, [,v]) => s + v, 0);
+                                // 构建饼图扇形路径
+                                const cx = 80, cy = 80, r = 70, innerR = 36;
+                                let cumAngle = -Math.PI / 2;
+                                const slices = entries.map(([k, v]) => {
+                                    const angle = (v / total) * 2 * Math.PI;
+                                    const x1 = cx + r * Math.cos(cumAngle);
+                                    const y1 = cy + r * Math.sin(cumAngle);
+                                    const x2 = cx + r * Math.cos(cumAngle + angle);
+                                    const y2 = cy + r * Math.sin(cumAngle + angle);
+                                    const ix1 = cx + innerR * Math.cos(cumAngle);
+                                    const iy1 = cy + innerR * Math.sin(cumAngle);
+                                    const ix2 = cx + innerR * Math.cos(cumAngle + angle);
+                                    const iy2 = cy + innerR * Math.sin(cumAngle + angle);
+                                    const large = angle > Math.PI ? 1 : 0;
+                                    const d = `M ${ix1} ${iy1} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${large} 0 ${ix1} ${iy1} Z`;
+                                    const midAngle = cumAngle + angle / 2;
+                                    cumAngle += angle;
+                                    return { k, v, d, color: CATEGORIES[k]?.color || '#888', pct: Math.round(v / total * 100), midAngle };
+                                });
                                 return (
                                     <div className="glass p-4 rounded-xl">
-                                        <div className="text-[10px] text-gray-500 mb-3">数据摘要</div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {Object.entries(data.summary).map(([k,v]) => (
-                                                <div key={k} className="flex items-center justify-between px-3 py-2 rounded" style={{background: CATEGORIES[k]?.color+'11', border:`1px solid ${CATEGORIES[k]?.color}33`}}>
-                                                    <span className="text-[10px]" style={{color: CATEGORIES[k]?.color}}>{CATEGORIES[k]?.label}</span>
-                                                    <span className="text-[11px] font-bold text-white">{v}m</span>
-                                                </div>
-                                            ))}
+                                        <div className="text-[10px] text-gray-500 mb-3">数据摘要 · 共 {total}m</div>
+                                        <div className="flex items-center gap-4">
+                                            <svg width="160" height="160" viewBox="0 0 160 160" className="shrink-0">
+                                                {slices.map((s, i) => (
+                                                    <path key={i} d={s.d} fill={s.color} opacity="0.85" />
+                                                ))}
+                                                {/* 中心显示总时长 */}
+                                                <text x="80" y="76" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#00ff41">{total}</text>
+                                                <text x="80" y="90" textAnchor="middle" fontSize="9" fill="#666">分钟</text>
+                                            </svg>
+                                            <div className="flex flex-col gap-2 flex-1 min-w-0">
+                                                {slices.map((s) => (
+                                                    <div key={s.k} className="flex items-center gap-2">
+                                                        <span className="w-2 h-2 rounded-full shrink-0" style={{background: s.color}}></span>
+                                                        <span className="text-[10px] truncate flex-1" style={{color: s.color}}>{CATEGORIES[s.k]?.label}</span>
+                                                        <span className="text-[10px] text-gray-400 shrink-0">{s.v}m</span>
+                                                        <span className="text-[9px] shrink-0" style={{color: s.color}}>{s.pct}%</span>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
                                     </div>
                                 );
