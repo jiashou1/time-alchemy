@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.7.1</title>
+    <title>时间炼金术 v1.7.2</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -58,10 +58,12 @@
             const [activeTask, setActiveTask] = useState(() => JSON.parse(localStorage.getItem('activeTask') || 'null'));
             const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem('syncConfig') || `{"token":"","gistId":"","tagMap":"${DEFAULT_TAGS}","apiKey":"","modelName":"gemini-3-flash-preview"}`));
             const [syncing, setSyncing] = useState(false);
-            const [feeling, setFeeling] = useState('');
+            // 与 activeTask 联动持久化：有 activeTask 时从 localStorage 恢复，否则用默认值
+            const _hasActive = !!JSON.parse(localStorage.getItem('activeTask') || 'null');
+            const [feeling, setFeeling] = useState(() => _hasActive ? (localStorage.getItem('activeFeeling') || '') : '');
+            const [currentCategory, setCurrentCategory] = useState(() => _hasActive ? (localStorage.getItem('activeCategory') || 'CORE') : 'CORE');
+            const [selectedQuickTags, setSelectedQuickTags] = useState(() => { try { return _hasActive ? JSON.parse(localStorage.getItem('activeQuickTags') || '[]') : []; } catch { return []; } });
             const [ideaText, setIdeaText] = useState('');
-            const [currentCategory, setCurrentCategory] = useState('CORE');
-            const [selectedQuickTags, setSelectedQuickTags] = useState([]);
             const [editingId, setEditingId] = useState(null);
             const [editDraft, setEditDraft] = useState(null);
             const [editQuickTags, setEditQuickTags] = useState([]);
@@ -74,10 +76,23 @@
             const [reviewMessages, setReviewMessages] = useState([]);
             const [reviewLoading, setReviewLoading] = useState(false);
             const [reviewInput, setReviewInput] = useState('');
+            const [elapsed, setElapsed] = useState(0);
 
             useEffect(() => { localStorage.setItem('timeLogs', JSON.stringify(logs)); }, [logs]);
             useEffect(() => { localStorage.setItem('activeTask', JSON.stringify(activeTask)); }, [activeTask]);
             useEffect(() => { localStorage.setItem('syncConfig', JSON.stringify(config)); }, [config]);
+            // 持久化计时配套状态
+            useEffect(() => { if (activeTask) localStorage.setItem('activeFeeling', feeling); }, [feeling, activeTask]);
+            useEffect(() => { if (activeTask) localStorage.setItem('activeCategory', currentCategory); }, [currentCategory, activeTask]);
+            useEffect(() => { if (activeTask) localStorage.setItem('activeQuickTags', JSON.stringify(selectedQuickTags)); }, [selectedQuickTags, activeTask]);
+            // 计时器：每秒更新 elapsed
+            useEffect(() => {
+                if (!activeTask) { setElapsed(0); return; }
+                const tick = () => setElapsed(Math.floor((Date.now() - new Date(activeTask.startTime)) / 1000));
+                tick();
+                const id = setInterval(tick, 1000);
+                return () => clearInterval(id);
+            }, [activeTask]);
 
             const displayLogs = useMemo(() => logs.filter(l => !l.deleted).sort((a, b) => new Date(b.startTime) - new Date(a.startTime)), [logs]);
 
@@ -157,7 +172,19 @@
                 const prefix = selectedQuickTags.length > 0 ? `[@${selectedQuickTags.join('/')}] ` : "";
                 const newTask = { ...activeTask, category: currentCategory, feeling: prefix + feeling, endTime: now.toISOString(), duration: Math.max(1, Math.round((now - new Date(activeTask.startTime)) / 60000)), updatedAt: Date.now() };
                 const newLogs = [newTask, ...logs];
-                setLogs(newLogs); setActiveTask(null); setFeeling(''); setSelectedQuickTags([]); syncData(newLogs);
+                setLogs(newLogs); setActiveTask(null); setFeeling(''); setSelectedQuickTags([]);
+                localStorage.removeItem('activeFeeling');
+                localStorage.removeItem('activeCategory');
+                localStorage.removeItem('activeQuickTags');
+                syncData(newLogs);
+            };
+
+            const formatElapsed = (secs) => {
+                if (secs < 60) return `${secs}秒`;
+                const m = Math.floor(secs / 60);
+                const h = Math.floor(m / 60);
+                if (h > 0) return `${h}小时${m % 60 > 0 ? (m % 60) + '分' : ''}`;
+                return `${m}分`;
             };
 
             const renderContent = (text) => {
@@ -311,7 +338,7 @@ ${data.recordsText}
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.1</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.2</h1>
                         <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
@@ -370,6 +397,10 @@ ${data.recordsText}
                                     当前分类：{CATEGORIES[currentCategory].label}
                                 </span>
                                 <span className="text-[10px] animate-pulse text-red-500 font-bold uppercase tracking-wider">Logging...</span>
+                            </div>
+                            <div className="flex items-center justify-between mb-4 px-1">
+                                <span className="text-[10px] text-gray-500">开始于 <span className="text-gray-300">{formatTime(activeTask.startTime)}</span></span>
+                                <span className="text-lg font-bold text-[#00ff41] tabular-nums">{formatElapsed(elapsed)}</span>
                             </div>
                             
                             {currentSubTags.length > 0 && (
