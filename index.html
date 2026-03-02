@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>时间炼金术 v1.7.3</title>
+    <title>时间炼金术 v1.7.4</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -324,10 +324,35 @@ ${data.recordsText}
                 finally { setReviewLoading(false); }
             };
 
+            const exportToClipboard = async () => {
+                const sorted = logs
+                    .filter(l => !l.deleted)
+                    .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+                if (sorted.length === 0) { alert('暂无记录可导出'); return; }
+                const lines = sorted.map(l => {
+                    const start = formatDT(l.startTime);
+                    if (l.category === 'IDEA') {
+                        const text = l.feeling || '';
+                        return `${start}｜${text}`;
+                    } else {
+                        const end = formatDT(l.endTime);
+                        const category = CATEGORIES[l.category]?.label || l.category;
+                        const tags = l.feeling?.match(/^\[@(.+?)\]/)?.[1]?.replace(/\//g, '/') || '';
+                        const text = l.feeling?.replace(/^\[@.+?\]\s*/, '') || '';
+                        return `${start}｜${end}｜${category}｜${tags}｜${text}`;
+                    }
+                });
+                const content = lines.join('\n');
+                try {
+                    await navigator.clipboard.writeText(content);
+                    alert(`已复制 ${sorted.length} 条记录到剪贴板`);
+                } catch(e) { alert('复制失败，请检查浏览器权限'); }
+            };
+
             return (
                 <div className="max-w-md mx-auto p-4 pb-20">
                     <header className="mb-6 pt-4 flex justify-between items-center border-b border-gray-900 pb-4">
-                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.3</h1>
+                        <h1 className="text-xl font-bold text-[#00ff41]">时间炼金术 v1.7.4</h1>
                         <button onClick={() => { setTempConfig({...config}); setShowSettings(true); }} className="text-gray-500 text-xl">⚙️</button>
                     </header>
 
@@ -351,6 +376,9 @@ ${data.recordsText}
                             <div className="flex gap-2">
                                 <button onClick={() => syncData(logs, 'pull')} className="bg-gray-800 text-white flex-1 py-2 rounded">从云端覆盖</button>
                                 <button onClick={() => { setConfig({...tempConfig}); setShowSettings(false); }} className="save-btn flex-1 py-2 rounded text-black font-bold">保存生效</button>
+                            </div>
+                            <div className="border-t border-gray-800 pt-4">
+                                <button onClick={exportToClipboard} className="w-full py-2 border border-gray-700 text-gray-400 rounded text-[10px] hover:border-[#00ff41] hover:text-[#00ff41] transition-colors">📋 导出全部记录到剪贴板</button>
                             </div>
                         </div>
                     )}
